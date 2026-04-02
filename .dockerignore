@@ -1,0 +1,10 @@
+.git
+.github
+.venv
+.ruff_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.python-version
+codex/runtime
