@@ -1,3 +1,7 @@
+---
+description: Safely append one Discord memo entry to a TSV file using Python with UTF-8 output.
+---
+
 # memo-write
 
 Append one memo line to a TSV file safely in the container.
@@ -12,7 +16,7 @@ Use Python for consistent escaping and UTF-8 behavior:
 
 ```bash
 python3 - <<'PY'
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 output_file = Path("/app/claude/runtime/memo.txt")

@@ -11,12 +11,11 @@ import yaml
 class AgentRoute:
     emoji: str
     agent_id: str
-    instructions_path: Path
+    agent_dir: Path
+    agent_file: Path
     params: dict[str, Any] = field(default_factory=dict)
     model: str | None = None
     reasoning_effort: str | None = None
-    skill_path: Path | None = None
-    mcp_profile: Path | None = None
 
 
 @dataclass(slots=True)
@@ -44,7 +43,8 @@ def load_agent_manifest(path: Path) -> AgentManifest:
     if not isinstance(raw_routes, list) or not raw_routes:
         raise ValueError("Manifest must contain a non-empty 'routes' list")
 
-    base_dir = path.parent.parent
+    project_root = path.parent.parent
+    agents_dir = path.parent
     routes: list[AgentRoute] = []
 
     for index, item in enumerate(raw_routes, start=1):
@@ -53,24 +53,23 @@ def load_agent_manifest(path: Path) -> AgentManifest:
 
         emoji = item.get("emoji")
         agent_id = item.get("agent_id")
-        instructions_rel = item.get("instructions_path")
 
         if not isinstance(emoji, str) or not emoji:
             raise ValueError(f"Route #{index} is missing 'emoji'")
         if not isinstance(agent_id, str) or not agent_id:
             raise ValueError(f"Route #{index} is missing 'agent_id'")
-        if not isinstance(instructions_rel, str) or not instructions_rel:
-            raise ValueError(f"Route #{index} is missing 'instructions_path'")
+
+        agent_dir = (agents_dir / agent_id).resolve()
+        agent_file = (agent_dir / ".claude" / "agents" / f"{agent_id}.md").resolve()
 
         route = AgentRoute(
             emoji=emoji,
             agent_id=agent_id,
-            instructions_path=base_dir / instructions_rel,
-            params=_read_params(base_dir, item),
+            agent_dir=agent_dir,
+            agent_file=agent_file,
+            params=_read_params(project_root, item),
             model=_read_optional_str(item, "model"),
             reasoning_effort=_read_reasoning_effort(item),
-            skill_path=_read_optional_path(base_dir, item, "skill_path"),
-            mcp_profile=_read_optional_path(base_dir, item, "mcp_profile"),
         )
         _validate_route(route, index)
         routes.append(route)
@@ -107,7 +106,7 @@ def _read_params(base_dir: Path, data: dict[str, object]) -> dict[str, Any]:
 
     output_file = params.get("output_file")
     if isinstance(output_file, str) and output_file:
-        params["output_file"] = base_dir / output_file
+        params["output_file"] = (base_dir / output_file).resolve()
     elif output_file is not None and not isinstance(output_file, Path):
         raise ValueError("Field 'params.output_file' must be a non-empty string when provided")
 
@@ -115,16 +114,7 @@ def _read_params(base_dir: Path, data: dict[str, object]) -> dict[str, Any]:
 
 
 def _validate_route(route: AgentRoute, index: int) -> None:
-    if not route.instructions_path.exists():
-        raise ValueError(
-            f"Route #{index} instructions_path does not exist: {route.instructions_path}"
-        )
-
-
-def _read_optional_path(base_dir: Path, data: dict[str, object], key: str) -> Path | None:
-    value = data.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"Field '{key}' must be a non-empty string when provided")
-    return base_dir / value
+    if not route.agent_dir.is_dir():
+        raise ValueError(f"Route #{index} agent directory does not exist: {route.agent_dir}")
+    if not route.agent_file.is_file():
+        raise ValueError(f"Route #{index} agent file does not exist: {route.agent_file}")

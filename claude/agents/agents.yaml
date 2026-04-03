@@ -1,7 +1,0 @@
-version: 1
-routes:
-  - emoji: "📝"
-    agent_id: "memo-agent"
-    instructions_path: "agents/memo-agent/AGENTS.md"
-    params:
-      output_file: "runtime/memo.txt"

@@ -39,7 +39,7 @@ RUN mkdir -p /app/claude/runtime && \
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    EMOJI_AGENT_MANIFEST=/app/claude/agents/agents.yaml
+    EMOJI_AGENT_MANIFEST=/app/agents/agents.yaml
 
 USER nonroot
 

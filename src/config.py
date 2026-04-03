@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # Discord Configuration
     discord_bot_token: str
-    emoji_agent_manifest: str = "claude/agents/agents.yaml"
+    emoji_agent_manifest: str = "agents/agents.yaml"
 
     # Logging Configuration
     log_level: str = "INFO"

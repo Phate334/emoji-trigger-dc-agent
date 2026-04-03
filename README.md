@@ -2,7 +2,7 @@
 
 使用 Python 3.13 + uv + discord.py 的 emoji 觸發 Discord bot。
 
-此版本使用單一設定檔 claude/agents/agents.yaml 管理 emoji 到 sub-agent 的對應，並且所有 route 一律透過 Claude Code SDK agent 執行（不再使用 mode 欄位）。
+此版本使用單一設定檔 `agents/agents.yaml` 管理 emoji 到 runtime agent 的對應。每個被觸發的 agent 都有自己的工作目錄 `agents/<agent-id>/`，並且只載入該目錄下的 Claude project `.claude` 設定，避免與專案開發時使用的全域或 repo-level agent 設定互相干擾。
 
 ## 1) 安裝依賴
 
@@ -28,7 +28,7 @@ export CLAUDE_MODEL="claude-sonnet-4-5"
 可選：覆蓋 manifest 路徑
 
 ```bash
-export EMOJI_AGENT_MANIFEST="claude/agents/agents.yaml"
+export EMOJI_AGENT_MANIFEST="agents/agents.yaml"
 ```
 
 ## 3) 啟動
@@ -73,29 +73,72 @@ docker compose logs -f bot
 ## 5) 固定目錄規約
 
 - AGENTS.md: 專案層級協作與規約說明
-- claude/agents/agents.yaml: 唯一執行期路由與 agent 註冊設定
-- claude/agents/{agent-id}/AGENTS.md: sub-agent instructions
-- claude/skills/{skill-id}/SKILL.md: 可重用 skills
-- claude/mcp/{profile-id}.toml: MCP profiles
+- agents/agents.yaml: 唯一執行期 emoji route 設定
+- agents/{agent-id}/: 單一 runtime agent 的專屬工作目錄，Claude SDK 執行時會將 `cwd` 指向這裡
+- agents/{agent-id}/.claude/agents/{agent-id}.md: Claude Code filesystem-based agent 定義
+- agents/{agent-id}/.claude/skills/{skill-id}/SKILL.md: 該 agent 專屬或共置的 skills
+- agents/{agent-id}/.mcp.json: 該 agent 專屬 MCP 設定（若需要）
 
-## 6) memo 範例
+說明：
 
-預設已提供 📝 對應 memo-agent：
+- 專案根目錄不使用 repo-level `.claude/` 來存放這些被 emoji 觸發的 runtime agent 設定
+- 執行時會將 Claude SDK 的 `cwd` 指向 `agents/{agent-id}/`
+- 並且只載入該 agent 目錄的 project 設定，確保不同 agent 間的 skills、MCP 與 agent 定義彼此隔離
+
+## 6) 建立新的 emoji agent
+
+1. 在 `agents/agents.yaml` 加入新的 route：
+
+```yaml
+routes:
+  - emoji: "📝"
+    agent_id: "memo-agent"
+    params:
+      output_file: "claude/runtime/memo.txt"
+```
+
+2. 建立對應的 agent 工作目錄：
+
+```text
+agents/
+  memo-agent/
+    .claude/
+      agents/
+        memo-agent.md
+      skills/
+        memo-write/
+          SKILL.md
+    .mcp.json   # optional
+```
+
+3. 在 `agents/<agent-id>/.claude/agents/<agent-id>.md` 中建立 Claude Code agent 定義。
+
+注意：
+
+- `agent_id` 會同時用在 manifest、目錄名稱，以及 agent markdown frontmatter 的 `name`
+- Claude Code subagent 的 `name` 需使用小寫加連字號，例如 `memo-agent`
+- 若要讓 agent 使用 project skills，skill 需放在該 agent 工作目錄底下的 `.claude/skills/`
+- 若要讓 agent 使用 project MCP，自訂 MCP 設定請放在該 agent 工作目錄底下的 `.mcp.json`
+
+## 7) memo 範例
+
+預設已提供 📝 對應 `memo-agent`：
 
 - 觸發方式：訊息包含 📝，或對訊息加上 📝 reaction
-- 行為：memo-agent 依照 AGENTS.md + skill 寫入 runtime/memo.txt
+- 行為：`memo-agent` 會在 `agents/memo-agent/` 作為 `cwd` 執行，並依照其 `.claude` 內容與 skill 寫入 `claude/runtime/memo.txt`
 - 回覆：bot 不會自動回傳完成訊息到頻道
 
-注意：Bot 不會對任意 emoji 觸發，只有 claude/agents/agents.yaml 內有設定的 emoji 才會觸發。
+注意：Bot 不會對任意 emoji 觸發，只有 `agents/agents.yaml` 內有設定的 emoji 才會觸發。
 
-## 7) Troubleshooting 與 Debug Log
+## 8) Troubleshooting 與 Debug Log
 
 若 Bot 已上線但沒有觸發，先確認：
 
-- 送出的 emoji 是否與 claude/agents/agents.yaml 完全一致（預設只有 📝）
+- 送出的 emoji 是否與 `agents/agents.yaml` 完全一致（預設只有 📝）
 - Bot 在該頻道是否具備 View Channels、Read Message History、Add Reactions
 - Developer Portal 的 Message Content Intent 是否已開啟
 - 環境中是否正確提供 ANTHROPIC_API_KEY
+- 對應的 agent 目錄下是否存在 `agents/{agent-id}/.claude/agents/{agent-id}.md`
 
 可透過環境變數提高 log 詳細度：
 

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-from pathlib import Path
 from typing import Any
 
 import discord
@@ -40,11 +38,10 @@ class AgentExecutor:
     async def _run_claude_turn(self, route: AgentRoute, message: discord.Message) -> str:
         if query is None or ClaudeAgentOptions is None:
             return "Claude Agent SDK is not installed yet. Run uv sync and retry."
-        if not route.instructions_path.exists():
-            return f"Missing AGENTS instructions file: {route.instructions_path}"
+        if not route.agent_file.exists():
+            return f"Missing Claude agent file: {route.agent_file}"
 
-        instructions = await asyncio.to_thread(route.instructions_path.read_text, "utf-8")
-        prompt = self._build_prompt(instructions, message, route.params)
+        prompt = self._build_prompt(message, route.params)
         options = self._build_claude_options(route)
         return await _run_claude_query(prompt, options)
 
@@ -56,23 +53,27 @@ class AgentExecutor:
             logger.error("Claude CLI stderr: %s", line)
 
         return ClaudeAgentOptions(
-            cwd=Path.cwd(),
+            cwd=route.agent_dir,
             model=model_id,
             effort=effort,
             max_turns=1,
             permission_mode="bypassPermissions",
+            setting_sources=["project"],
+            extra_args={"agent": route.agent_id},
             stderr=_stderr_callback,
         )
 
     @staticmethod
     def _build_prompt(
-        instructions: str,
         message: discord.Message,
         params: dict[str, Any] | None = None,
     ) -> str:
         parts = [
-            "Follow the sub-agent instructions exactly.\n",
-            instructions,
+            "A Discord emoji trigger invoked the current Claude agent.",
+            (
+                "Use your configured agent definition, project skills, "
+                "and project MCP setup to handle this request."
+            ),
             "\nIncoming message context:",
             f"author: {message.author}",
             f"channel_id: {message.channel.id}",
