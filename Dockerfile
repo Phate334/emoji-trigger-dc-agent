@@ -32,6 +32,11 @@ WORKDIR /app
 
 COPY --from=builder --chown=nonroot:nonroot /app /app
 
+# Ensure runtime directory exists with open permissions
+# This will be adjusted by entrypoint if needed
+RUN mkdir -p /app/codex/runtime && \
+    chmod 777 /app/codex/runtime
+
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     EMOJI_AGENT_MANIFEST=/app/codex/agents/agents.yaml

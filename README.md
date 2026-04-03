@@ -77,6 +77,30 @@ docker compose logs -f bot
 - 行為：把原始訊息內容 append 到 `runtime/memo.txt`
 - 回覆：`Memo saved.`
 
+注意：Bot 不會對「任意 emoji」觸發，只有 `codex/agents/agents.yaml` 內有設定的 emoji 才會觸發。
+
+## 8) Troubleshooting 與 Debug Log
+
+若 Bot 已上線但沒有觸發，先確認：
+
+- 送出的 emoji 是否與 `codex/agents/agents.yaml` 完全一致（預設只有 `📝`）
+- Bot 在該頻道是否具備 `View Channels`、`Send Messages`、`Read Message History`、`Add Reactions`
+- Developer Portal 的 `Message Content Intent` 是否已開啟
+
+可透過環境變數提高 log 詳細度：
+
+```bash
+LOG_LEVEL=DEBUG DISCORD_LOG_LEVEL=DEBUG docker compose up --build -d
+docker compose logs -f bot
+```
+
+如果使用 `.env`，可加入：
+
+```ini
+LOG_LEVEL=DEBUG
+DISCORD_LOG_LEVEL=DEBUG
+```
+
 範例 `codex/agents/agents.yaml`：
 
 ```yaml

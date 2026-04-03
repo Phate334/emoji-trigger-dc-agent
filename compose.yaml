@@ -2,8 +2,8 @@ services:
   bot:
     build: .
     image: emoji-trigger-agent:latest
-    environment:
-      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+    env_file:
+      - .env
     volumes:
       - ./codex/runtime:/app/codex/runtime
     restart: unless-stopped

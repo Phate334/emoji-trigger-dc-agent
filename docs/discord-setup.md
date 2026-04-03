@@ -62,6 +62,25 @@
 1. 在瀏覽器開啟複製的邀請連結。
 2. 選擇目標伺服器，點擊 **Authorize**。
 
+### 4-3. 保持 Bot 私有（Private）
+
+若你希望 Bot 僅供自己或管理團隊使用，可在 Developer Portal 進行以下設定：
+
+1. 前往左側選單 **Bot**。
+2. 在 Bot 設定區塊找到 **Public Bot**，將其關閉（unchecked）。
+
+依據 Discord 官方 OAuth2 文件，當 **Public Bot** 關閉時，只有應用程式擁有者可將 Bot 加入伺服器；若開啟，任何擁有邀請連結且具備權限的使用者都可安裝該 Bot。
+
+進一步建議（可選）：
+
+1. 前往左側選單 **Installation**。
+2. 在 **Install Link** 類型中，視需求選擇：
+   - **None**：隱藏 App 頁面的 **Add App** 按鈕。
+   - **Discord Provided Link** 或 **Custom URL**：保留安裝入口，但仍建議不要公開散佈連結。
+3. 在 **Installation Contexts** 中，若只需要伺服器安裝，維持僅啟用 **Guild Install**（可關閉 **User Install**）。
+
+> ℹ️ 「私有」主要限制的是誰可以新增安裝。關閉 **Public Bot** 不會自動移除 Bot 在既有伺服器中的安裝狀態。
+
 ---
 
 ## 5. 設定環境變數
@@ -103,3 +122,6 @@ Logged in as <bot name> (<bot id>)
 - [Gateway Intents 說明文件](https://docs.discord.com/developers/events/gateway#privileged-intents)
 - [discord.py Intents 入門指南](https://discordpy.readthedocs.io/en/stable/intents.html)
 - [Bot 驗證申請流程](https://support-dev.discord.com/hc/en-us/articles/23926564536471)
+- [OAuth2 Bot Users（Public Bot 行為說明）](https://docs.discord.com/developers/topics/oauth2#bot-users)
+- [Application Resource（`bot_public` 欄位定義）](https://docs.discord.com/developers/resources/application)
+- [Application Resource Install Links（Install Link 類型與設定）](https://docs.discord.com/developers/resources/application#install-links)
