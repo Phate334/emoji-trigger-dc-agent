@@ -29,8 +29,13 @@ logger = logging.getLogger("emoji-trigger-agent")
 
 
 class AgentExecutor:
-    def __init__(self, default_model_id: str | None = None) -> None:
+    def __init__(
+        self,
+        default_model_id: str | None = None,
+        sdk_env: dict[str, str] | None = None,
+    ) -> None:
         self.default_model_id = default_model_id
+        self.sdk_env = dict(sdk_env or {})
 
     async def execute(self, route: AgentRoute, message: discord.Message) -> str:
         return await self._run_claude_turn(route, message)
@@ -59,6 +64,7 @@ class AgentExecutor:
             max_turns=1,
             permission_mode="bypassPermissions",
             setting_sources=["project"],
+            env=dict(self.sdk_env),
             extra_args={"agent": route.agent_id},
             stderr=_stderr_callback,
         )

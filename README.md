@@ -14,10 +14,34 @@ uv sync
 
 ## 2) 設定環境變數
 
+至少提供一種 Claude 驗證方式：
+
+- `ANTHROPIC_API_KEY`: 官方 Anthropic API / Claude Agent SDK 標準設定，會走 `X-Api-Key`
+- `ANTHROPIC_AUTH_TOKEN`: Claude Code 的替代設定，會走 `Authorization: Bearer ...`，適合 proxy / gateway
+
+直連 Anthropic 官方 API：
+
 ```bash
 export DISCORD_BOT_TOKEN="你的 token"
 export ANTHROPIC_API_KEY="你的 anthropic key"
 ```
+
+如果是走需要 bearer token 的 proxy / gateway，請改用：
+
+```bash
+export DISCORD_BOT_TOKEN="你的 token"
+export ANTHROPIC_AUTH_TOKEN="你的 gateway bearer token"
+export ANTHROPIC_BASE_URL="https://your-gateway.example.com"
+```
+
+如果不是直接連 Anthropic，而是走本機 LLM endpoint 或相容 proxy，可設定：
+
+```bash
+export ANTHROPIC_API_KEY="sk-temp"
+export ANTHROPIC_BASE_URL="http://localhost:8080"
+```
+
+只要 `ANTHROPIC_BASE_URL` 指向自訂 endpoint，`ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN` 擇一提供即可，實際要用哪個取決於該 endpoint 期待哪種 header。
 
 可選：指定預設模型 ID（所有 route 共用，若 route 有設定 model 會覆蓋）
 
@@ -43,8 +67,20 @@ uv run python -m src.app
 
 ```bash
 DISCORD_BOT_TOKEN=你的 token
-ANTHROPIC_API_KEY=你的 anthropic key
-CLAUDE_MODEL=claude-sonnet-4-5
+ANTHROPIC_API_KEY=sk-temp
+ANTHROPIC_BASE_URL=http://llm:8080
+CLAUDE_MODEL=gemma-4-26b-a4b
+```
+
+若要直連 Anthropic，則把 `ANTHROPIC_BASE_URL` 拿掉，並將 `ANTHROPIC_API_KEY` 換成真實金鑰。
+
+若要接需要 bearer token 的 gateway，則可改成：
+
+```bash
+DISCORD_BOT_TOKEN=你的 token
+ANTHROPIC_AUTH_TOKEN=你的 gateway bearer token
+ANTHROPIC_BASE_URL=https://your-gateway.example.com
+CLAUDE_MODEL=你的模型名稱
 ```
 
 建置映像：
@@ -137,7 +173,8 @@ agents/
 - 送出的 emoji 是否與 `agents/agents.yaml` 完全一致（預設只有 📝）
 - Bot 在該頻道是否具備 View Channels、Read Message History、Add Reactions
 - Developer Portal 的 Message Content Intent 是否已開啟
-- 環境中是否正確提供 ANTHROPIC_API_KEY
+- 環境中是否正確提供 `ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN`
+- 若有設定 `ANTHROPIC_BASE_URL`，該 endpoint 是否真的接受你選的驗證 header
 - 對應的 agent 目錄下是否存在 `agents/{agent-id}/.claude/agents/{agent-id}.md`
 
 可透過環境變數提高 log 詳細度：

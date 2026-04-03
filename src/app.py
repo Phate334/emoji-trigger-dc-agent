@@ -17,7 +17,10 @@ def run() -> None:
     logger.debug("Using manifest: %s", settings.emoji_agent_manifest)
 
     manifest = load_agent_manifest(settings.get_emoji_agent_manifest_path())
-    executor = AgentExecutor(default_model_id=settings.claude_model)
+    executor = AgentExecutor(
+        default_model_id=settings.claude_model,
+        sdk_env=settings.build_claude_sdk_env(),
+    )
     client = build_client(manifest=manifest, executor=executor)
     client.run(settings.discord_bot_token)
 
