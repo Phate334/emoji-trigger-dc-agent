@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ except ImportError:  # pragma: no cover - optional dependency in early rollout
 
 _VALID_EFFORTS = {"low", "medium", "high", "max"}
 
+logger = logging.getLogger("emoji-trigger-agent")
+
 
 class AgentExecutor:
     async def execute(self, route: AgentRoute, message: discord.Message) -> str:
@@ -45,12 +48,17 @@ class AgentExecutor:
     @staticmethod
     def _build_claude_options(route: AgentRoute) -> ClaudeAgentOptions:
         effort = route.reasoning_effort if route.reasoning_effort in _VALID_EFFORTS else None
+
+        def _stderr_callback(line: str) -> None:
+            logger.error("Claude CLI stderr: %s", line)
+
         return ClaudeAgentOptions(
             cwd=Path.cwd(),
             model=route.model,
             effort=effort,
             max_turns=1,
             permission_mode="bypassPermissions",
+            stderr=_stderr_callback,
         )
 
     @staticmethod
@@ -80,13 +88,27 @@ async def _run_claude_query(prompt: str, options: ClaudeAgentOptions) -> str:
     assistant_fragments: list[str] = []
     final_result: str | None = None
 
-    async for msg in query(prompt=prompt, options=options):
-        if isinstance(msg, AssistantMessage):
-            for block in msg.content:
-                if isinstance(block, TextBlock) and block.text.strip():
-                    assistant_fragments.append(block.text.strip())
-        elif isinstance(msg, ResultMessage) and isinstance(msg.result, str) and msg.result.strip():
-            final_result = msg.result.strip()
+    try:
+        async for msg in query(prompt=prompt, options=options):
+            if isinstance(msg, AssistantMessage):
+                for block in msg.content:
+                    if isinstance(block, TextBlock) and block.text.strip():
+                        assistant_fragments.append(block.text.strip())
+            elif (
+                isinstance(msg, ResultMessage)
+                and isinstance(msg.result, str)
+                and msg.result.strip()
+            ):
+                final_result = msg.result.strip()
+    except Exception:
+        if final_result or assistant_fragments:
+            logger.warning(
+                "Claude query ended with non-zero exit after producing output; "
+                "returning partial result",
+                exc_info=True,
+            )
+        else:
+            raise
 
     if final_result:
         return final_result

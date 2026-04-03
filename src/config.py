@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +31,24 @@ class Settings(BaseSettings):
 
     # Optional: Custom base URL for Claude API (for proxy or alternative endpoints)
     anthropic_base_url: str | None = None
+
+    @field_validator("anthropic_api_key")
+    @classmethod
+    def validate_anthropic_api_key(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("ANTHROPIC_API_KEY must not be empty")
+
+        placeholder_values = {
+            "your-anthropic-api-key-here",
+            "sk-temp",
+        }
+        if normalized in placeholder_values:
+            raise ValueError(
+                "ANTHROPIC_API_KEY is a placeholder value; set a real Anthropic API key"
+            )
+
+        return normalized
 
     model_config = SettingsConfigDict(
         env_file=".env",
