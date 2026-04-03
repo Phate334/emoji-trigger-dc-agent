@@ -15,6 +15,7 @@ class Settings(BaseSettings):
         log_level: Application log level
         discord_log_level: Discord.py library log level
         anthropic_api_key: Anthropic API key (required)
+        claude_model: Default Claude model id for all routes (optional)
         anthropic_base_url: Custom base URL for Claude API (optional)
     """
 
@@ -28,6 +29,7 @@ class Settings(BaseSettings):
 
     # Claude Code SDK Configuration
     anthropic_api_key: str
+    claude_model: str | None = None
 
     # Optional: Custom base URL for Claude API (for proxy or alternative endpoints)
     anthropic_base_url: str | None = None
@@ -49,6 +51,14 @@ class Settings(BaseSettings):
             )
 
         return normalized
+
+    @field_validator("claude_model")
+    @classmethod
+    def normalize_claude_model(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     model_config = SettingsConfigDict(
         env_file=".env",

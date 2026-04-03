@@ -19,6 +19,12 @@ export DISCORD_BOT_TOKEN="你的 token"
 export ANTHROPIC_API_KEY="你的 anthropic key"
 ```
 
+可選：指定預設模型 ID（所有 route 共用，若 route 有設定 model 會覆蓋）
+
+```bash
+export CLAUDE_MODEL="claude-sonnet-4-5"
+```
+
 可選：覆蓋 manifest 路徑
 
 ```bash
@@ -38,6 +44,7 @@ uv run python -m src.app
 ```bash
 DISCORD_BOT_TOKEN=你的 token
 ANTHROPIC_API_KEY=你的 anthropic key
+CLAUDE_MODEL=claude-sonnet-4-5
 ```
 
 建置映像：

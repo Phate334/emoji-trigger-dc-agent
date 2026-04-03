@@ -31,6 +31,9 @@ logger = logging.getLogger("emoji-trigger-agent")
 
 
 class AgentExecutor:
+    def __init__(self, default_model_id: str | None = None) -> None:
+        self.default_model_id = default_model_id
+
     async def execute(self, route: AgentRoute, message: discord.Message) -> str:
         return await self._run_claude_turn(route, message)
 
@@ -45,16 +48,16 @@ class AgentExecutor:
         options = self._build_claude_options(route)
         return await _run_claude_query(prompt, options)
 
-    @staticmethod
-    def _build_claude_options(route: AgentRoute) -> ClaudeAgentOptions:
+    def _build_claude_options(self, route: AgentRoute) -> ClaudeAgentOptions:
         effort = route.reasoning_effort if route.reasoning_effort in _VALID_EFFORTS else None
+        model_id = route.model or self.default_model_id
 
         def _stderr_callback(line: str) -> None:
             logger.error("Claude CLI stderr: %s", line)
 
         return ClaudeAgentOptions(
             cwd=Path.cwd(),
-            model=route.model,
+            model=model_id,
             effort=effort,
             max_turns=1,
             permission_mode="bypassPermissions",
