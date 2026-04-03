@@ -1,78 +1,95 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import discord
 
 from .agent_manifest import AgentRoute
 
 try:
-    from codex_app_server import Codex
+    from claude_agent_sdk import (
+        AssistantMessage,
+        ClaudeAgentOptions,
+        ResultMessage,
+        TextBlock,
+        query,
+    )
 except ImportError:  # pragma: no cover - optional dependency in early rollout
-    Codex = None
+    AssistantMessage = None
+    ClaudeAgentOptions = None
+    ResultMessage = None
+    TextBlock = None
+    query = None
+
+
+_VALID_EFFORTS = {"low", "medium", "high", "max"}
 
 
 class AgentExecutor:
     async def execute(self, route: AgentRoute, message: discord.Message) -> str:
-        if route.mode == "memo_append":
-            return await self._append_memo(route, message)
-        return await self._run_codex_turn(route, message)
+        return await self._run_claude_turn(route, message)
 
-    async def _append_memo(self, route: AgentRoute, message: discord.Message) -> str:
-        if route.output_file is None:
-            raise ValueError("memo_append mode requires 'output_file'")
-
-        line = self._format_memo_line(message)
-        await asyncio.to_thread(_append_line, route.output_file, line)
-        return route.response_text
-
-    async def _run_codex_turn(self, route: AgentRoute, message: discord.Message) -> str:
-        if Codex is None:
-            return "Codex SDK is not installed yet. Install dependencies and retry."
+    async def _run_claude_turn(self, route: AgentRoute, message: discord.Message) -> str:
+        if query is None or ClaudeAgentOptions is None:
+            return "Claude Agent SDK is not installed yet. Run uv sync and retry."
         if not route.instructions_path.exists():
             return f"Missing AGENTS instructions file: {route.instructions_path}"
 
         instructions = await asyncio.to_thread(route.instructions_path.read_text, "utf-8")
-        prompt = self._build_prompt(instructions, message)
-        return await asyncio.to_thread(_run_codex_sync, route.model, route.effort, prompt)
+        prompt = self._build_prompt(instructions, message, route.params)
+        options = self._build_claude_options(route)
+        return await _run_claude_query(prompt, options)
 
     @staticmethod
-    def _format_memo_line(message: discord.Message) -> str:
-        timestamp = datetime.now(UTC).isoformat()
-        author = str(message.author)
-        content = message.content.replace("\n", " ").strip()
-        return f"{timestamp}\t{author}\t{content}".strip()
-
-    @staticmethod
-    def _build_prompt(instructions: str, message: discord.Message) -> str:
-        return (
-            "Follow the sub-agent instructions exactly.\n\n"
-            f"{instructions}\n\n"
-            "Incoming message context:\n"
-            f"author: {message.author}\n"
-            f"channel_id: {message.channel.id}\n"
-            f"content: {message.content}\n"
+    def _build_claude_options(route: AgentRoute) -> ClaudeAgentOptions:
+        effort = route.reasoning_effort if route.reasoning_effort in _VALID_EFFORTS else None
+        return ClaudeAgentOptions(
+            cwd=Path.cwd(),
+            model=route.model,
+            effort=effort,
+            max_turns=1,
+            permission_mode="bypassPermissions",
         )
 
+    @staticmethod
+    def _build_prompt(
+        instructions: str,
+        message: discord.Message,
+        params: dict[str, Any] | None = None,
+    ) -> str:
+        parts = [
+            "Follow the sub-agent instructions exactly.\n",
+            instructions,
+            "\nIncoming message context:",
+            f"author: {message.author}",
+            f"channel_id: {message.channel.id}",
+            f"content: {message.content}",
+        ]
+        if params:
+            params_lines = "\n".join(f"  {k}: {v}" for k, v in params.items())
+            parts.append(f"route params:\n{params_lines}")
+        return "\n".join(parts)
 
-def _append_line(path: Path, line: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as file:
-        file.write(line)
-        file.write("\n")
 
+async def _run_claude_query(prompt: str, options: ClaudeAgentOptions) -> str:
+    if query is None or AssistantMessage is None or ResultMessage is None or TextBlock is None:
+        return "Claude Agent SDK is not installed yet."
 
-def _run_codex_sync(model: str, effort: str, prompt: str) -> str:
-    if Codex is None:
-        return "Codex SDK is not installed yet."
+    assistant_fragments: list[str] = []
+    final_result: str | None = None
 
-    with Codex() as codex:
-        thread = codex.thread_start(model=model, config={"model_reasoning_effort": effort})
-        result = thread.run(prompt)
+    async for msg in query(prompt=prompt, options=options):
+        if isinstance(msg, AssistantMessage):
+            for block in msg.content:
+                if isinstance(block, TextBlock) and block.text.strip():
+                    assistant_fragments.append(block.text.strip())
+        elif isinstance(msg, ResultMessage) and isinstance(msg.result, str) and msg.result.strip():
+            final_result = msg.result.strip()
 
-    final_response = getattr(result, "final_response", None)
-    if isinstance(final_response, str) and final_response.strip():
-        return final_response.strip()
-    return "Codex task completed."
+    if final_result:
+        return final_result
+    if assistant_fragments:
+        return "\n".join(assistant_fragments)
+    return "Claude task completed."

@@ -1,24 +1,25 @@
-import os
-from pathlib import Path
+import logging
 
 from .agent_manifest import load_agent_manifest
 from .bot import build_client
+from .config import Settings
 from .executor import AgentExecutor
 from .logging_config import setup_logging
 
+logger = logging.getLogger("emoji-trigger-agent")
+
 
 def run() -> None:
-    setup_logging()
+    settings = Settings()
+    setup_logging(settings)
 
-    token = os.getenv("DISCORD_BOT_TOKEN")
-    if not token:
-        raise RuntimeError("Missing DISCORD_BOT_TOKEN environment variable")
+    logger.info("Starting emoji trigger agent")
+    logger.debug("Using manifest: %s", settings.emoji_agent_manifest)
 
-    manifest_path = Path(os.getenv("EMOJI_AGENT_MANIFEST", "codex/agents/agents.yaml"))
-    manifest = load_agent_manifest(manifest_path)
+    manifest = load_agent_manifest(settings.get_emoji_agent_manifest_path())
     executor = AgentExecutor()
     client = build_client(manifest=manifest, executor=executor)
-    client.run(token)
+    client.run(settings.discord_bot_token)
 
 
 def main() -> None:

@@ -24,4 +24,4 @@ The runtime prompt contains:
 - Return a short completion response only after successful write.
 
 ## Skill
-Use skill guidance from `codex/skills/memo-write/SKILL.md`.
+Use skill guidance from `claude/skills/memo-write/SKILL.md`.

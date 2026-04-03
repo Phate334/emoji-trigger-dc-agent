@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -11,11 +12,9 @@ class AgentRoute:
     emoji: str
     agent_id: str
     instructions_path: Path
-    mode: str = "codex_turn"
-    response_text: str = "Task completed."
-    output_file: Path | None = None
-    model: str = "gpt-5.4"
-    effort: str = "medium"
+    params: dict[str, Any] = field(default_factory=dict)
+    model: str | None = None
+    reasoning_effort: str | None = None
     skill_path: Path | None = None
     mcp_profile: Path | None = None
 
@@ -67,24 +66,59 @@ def load_agent_manifest(path: Path) -> AgentManifest:
             emoji=emoji,
             agent_id=agent_id,
             instructions_path=base_dir / instructions_rel,
-            mode=_read_str(item, "mode", "codex_turn"),
-            response_text=_read_str(item, "response_text", "Task completed."),
-            output_file=_read_optional_path(base_dir, item, "output_file"),
-            model=_read_str(item, "model", "gpt-5.4"),
-            effort=_read_str(item, "effort", "medium"),
+            params=_read_params(base_dir, item),
+            model=_read_optional_str(item, "model"),
+            reasoning_effort=_read_reasoning_effort(item),
             skill_path=_read_optional_path(base_dir, item, "skill_path"),
             mcp_profile=_read_optional_path(base_dir, item, "mcp_profile"),
         )
+        _validate_route(route, index)
         routes.append(route)
 
     return AgentManifest(routes=routes)
 
 
-def _read_str(data: dict[str, object], key: str, default: str) -> str:
-    value = data.get(key, default)
-    if not isinstance(value, str):
-        raise ValueError(f"Field '{key}' must be a string")
+def _read_optional_str(data: dict[str, object], key: str) -> str | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"Field '{key}' must be a non-empty string when provided")
     return value
+
+
+def _read_reasoning_effort(data: dict[str, object]) -> str | None:
+    # Backward compatible with legacy `effort` key.
+    effort = data.get("reasoning_effort", data.get("effort"))
+    if effort is None:
+        return None
+    if not isinstance(effort, str) or not effort:
+        raise ValueError("Field 'reasoning_effort' (or legacy 'effort') must be a non-empty string")
+    return effort
+
+
+def _read_params(base_dir: Path, data: dict[str, object]) -> dict[str, Any]:
+    raw_params = data.get("params")
+    params: dict[str, Any] = {}
+    if raw_params is not None:
+        if not isinstance(raw_params, dict):
+            raise ValueError("Field 'params' must be a mapping when provided")
+        params.update(raw_params)
+
+    output_file = params.get("output_file")
+    if isinstance(output_file, str) and output_file:
+        params["output_file"] = base_dir / output_file
+    elif output_file is not None and not isinstance(output_file, Path):
+        raise ValueError("Field 'params.output_file' must be a non-empty string when provided")
+
+    return params
+
+
+def _validate_route(route: AgentRoute, index: int) -> None:
+    if not route.instructions_path.exists():
+        raise ValueError(
+            f"Route #{index} instructions_path does not exist: {route.instructions_path}"
+        )
 
 
 def _read_optional_path(base_dir: Path, data: dict[str, object], key: str) -> Path | None:

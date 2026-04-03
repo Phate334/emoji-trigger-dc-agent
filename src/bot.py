@@ -29,10 +29,9 @@ class EmojiTriggerBot(discord.Client):
         logger.info("Loaded %s emoji route(s)", len(self.manifest.routes))
         for route in self.manifest.routes:
             logger.debug(
-                "Route loaded: emoji=%s agent_id=%s mode=%s",
+                "Route loaded: emoji=%s agent_id=%s",
                 route.emoji,
                 route.agent_id,
-                route.mode,
             )
         logger.info("Connected guilds: %s", len(self.guilds))
         for guild in self.guilds:
@@ -60,10 +59,12 @@ class EmojiTriggerBot(discord.Client):
 
         try:
             result = await self.executor.execute(route, message)
-            await message.channel.send(result)
         except Exception:
             logger.exception("Failed to handle message trigger for emoji %s", route.emoji)
             return
+
+        if result.strip():
+            logger.debug("Agent output suppressed from channel: %s", result)
 
         logger.info(
             "Triggered task for emoji %s in channel %s via agent %s",
@@ -120,10 +121,12 @@ class EmojiTriggerBot(discord.Client):
 
         try:
             result = await self.executor.execute(route, message)
-            await message.channel.send(result)
         except Exception:
             logger.exception("Failed to handle reaction trigger for emoji %s", route.emoji)
             return
+
+        if result.strip():
+            logger.debug("Agent output suppressed from channel: %s", result)
 
         logger.info(
             "Triggered task from reaction %s in channel %s via agent %s",

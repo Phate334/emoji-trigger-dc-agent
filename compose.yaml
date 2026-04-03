@@ -5,5 +5,5 @@ services:
     env_file:
       - .env
     volumes:
-      - ./codex/runtime:/app/codex/runtime
+      - ./claude/runtime:/app/claude/runtime
     restart: unless-stopped
