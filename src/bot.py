@@ -1,18 +1,112 @@
+from __future__ import annotations
+
+import asyncio
+import json
 import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 
 import discord
 
-from .agent_manifest import AgentManifest
-from .executor import AgentExecutor
+from .agent_manifest import AgentManifest, AgentRoute
+from .executor import AgentExecutor, TriggerContext
 
 logger = logging.getLogger("emoji-trigger-agent")
 
 
+@dataclass(frozen=True, slots=True)
+class TriggerKey:
+    message_id: int
+    emoji: str
+
+
+class TriggerLedger:
+    def __init__(self, state_file: Path) -> None:
+        self.state_file = state_file
+        self._loaded = False
+        self._lock = asyncio.Lock()
+        self._completed: set[TriggerKey] = set()
+        self._in_progress: set[TriggerKey] = set()
+
+    async def begin(self, key: TriggerKey) -> bool:
+        async with self._lock:
+            self._load_if_needed()
+            if key in self._completed or key in self._in_progress:
+                return False
+            self._in_progress.add(key)
+            return True
+
+    async def complete(
+        self,
+        key: TriggerKey,
+        *,
+        agent_id: str,
+        channel_id: int,
+        trigger: TriggerContext,
+    ) -> None:
+        async with self._lock:
+            self._completed.add(key)
+            self._in_progress.discard(key)
+            self._append_record(
+                {
+                    "processed_at": datetime.now(UTC).isoformat(),
+                    "message_id": key.message_id,
+                    "emoji": key.emoji,
+                    "agent_id": agent_id,
+                    "channel_id": channel_id,
+                    "trigger_source": trigger.source,
+                    "trigger_user_id": trigger.user_id,
+                }
+            )
+
+    async def abort(self, key: TriggerKey) -> None:
+        async with self._lock:
+            self._in_progress.discard(key)
+
+    def _load_if_needed(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        if not self.state_file.is_file():
+            return
+
+        with self.state_file.open("r", encoding="utf-8") as file:
+            for raw_line in file:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.warning("Skipping malformed trigger ledger line: %s", line)
+                    continue
+                message_id = item.get("message_id")
+                emoji = item.get("emoji")
+                if isinstance(message_id, int) and isinstance(emoji, str) and emoji:
+                    self._completed.add(TriggerKey(message_id=message_id, emoji=emoji))
+
+    def _append_record(self, record: dict[str, object]) -> None:
+        try:
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            with self.state_file.open("a", encoding="utf-8") as file:
+                file.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError:
+            logger.exception("Failed to persist trigger ledger record to %s", self.state_file)
+
+
 class EmojiTriggerBot(discord.Client):
-    def __init__(self, intents: discord.Intents, manifest: AgentManifest, executor: AgentExecutor):
+    def __init__(
+        self,
+        intents: discord.Intents,
+        manifest: AgentManifest,
+        executor: AgentExecutor,
+        trigger_ledger: TriggerLedger,
+    ):
         super().__init__(intents=intents)
         self.manifest = manifest
         self.executor = executor
+        self.trigger_ledger = trigger_ledger
 
     async def on_ready(self) -> None:
         if self.user is None:
@@ -52,26 +146,17 @@ class EmojiTriggerBot(discord.Client):
             message.content,
         )
 
-        route = self.manifest.route_for_message(message.content)
-        if route is None:
+        routes = self.manifest.routes_for_message(message.content)
+        if not routes:
             logger.debug("No route matched message content in channel %s", message.channel.id)
             return
 
-        try:
-            result = await self.executor.execute(route, message)
-        except Exception:
-            logger.exception("Failed to handle message trigger for emoji %s", route.emoji)
-            return
-
-        if result.strip():
-            logger.debug("Agent output suppressed from channel: %s", result)
-
-        logger.info(
-            "Triggered task for emoji %s in channel %s via agent %s",
-            route.emoji,
-            message.channel.id,
-            route.agent_id,
-        )
+        for route in routes:
+            await self._dispatch_route(
+                route,
+                message,
+                TriggerContext(source="message_content", emoji=route.emoji),
+            )
 
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
         if self.user is not None and payload.user_id == self.user.id:
@@ -119,19 +204,53 @@ class EmojiTriggerBot(discord.Client):
             logger.warning("Missing permission to fetch message %s", payload.message_id)
             return
 
-        try:
-            result = await self.executor.execute(route, message)
-        except Exception:
-            logger.exception("Failed to handle reaction trigger for emoji %s", route.emoji)
+        await self._dispatch_route(
+            route,
+            message,
+            TriggerContext(
+                source="reaction_add",
+                emoji=emoji_text,
+                user_id=payload.user_id,
+            ),
+        )
+
+    async def _dispatch_route(
+        self,
+        route: AgentRoute,
+        message: discord.Message,
+        trigger: TriggerContext,
+    ) -> None:
+        key = TriggerKey(message_id=message.id, emoji=trigger.emoji)
+        if not await self.trigger_ledger.begin(key):
+            logger.info(
+                "Skipping duplicate trigger for message %s emoji %s",
+                message.id,
+                trigger.emoji,
+            )
             return
+
+        try:
+            result = await self.executor.execute(route, message, trigger)
+        except Exception:
+            await self.trigger_ledger.abort(key)
+            logger.exception("Failed to handle trigger for emoji %s", route.emoji)
+            return
+
+        await self.trigger_ledger.complete(
+            key,
+            agent_id=route.agent_id,
+            channel_id=message.channel.id,
+            trigger=trigger,
+        )
 
         if result.strip():
             logger.debug("Agent output suppressed from channel: %s", result)
 
         logger.info(
-            "Triggered task from reaction %s in channel %s via agent %s",
+            "Triggered task from %s emoji %s in channel %s via agent %s",
+            trigger.source,
             route.emoji,
-            payload.channel_id,
+            message.channel.id,
             route.agent_id,
         )
 
@@ -140,4 +259,10 @@ def build_client(manifest: AgentManifest, executor: AgentExecutor) -> EmojiTrigg
     intents = discord.Intents.default()
     intents.message_content = True
     intents.reactions = True
-    return EmojiTriggerBot(intents=intents, manifest=manifest, executor=executor)
+    trigger_ledger = TriggerLedger(executor.outputs_root / ".state" / "processed-triggers.jsonl")
+    return EmojiTriggerBot(
+        intents=intents,
+        manifest=manifest,
+        executor=executor,
+        trigger_ledger=trigger_ledger,
+    )

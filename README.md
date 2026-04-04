@@ -49,6 +49,18 @@ export ANTHROPIC_BASE_URL="http://localhost:8080"
 export CLAUDE_MODEL="claude-sonnet-4-5"
 ```
 
+可選：指定 Claude agent 單次任務可用的最大 turns 數，預設為 `4`
+
+```bash
+export CLAUDE_MAX_TURNS="4"
+```
+
+可選：覆蓋 agent 持久化輸出根目錄，預設為 `/app/outputs`
+
+```bash
+export AGENT_OUTPUTS_ROOT="/app/outputs"
+```
+
 可選：覆蓋 manifest 路徑
 
 ```bash
@@ -70,6 +82,8 @@ DISCORD_BOT_TOKEN=你的 token
 ANTHROPIC_API_KEY=sk-temp
 ANTHROPIC_BASE_URL=http://llm:8080
 CLAUDE_MODEL=gemma-4-26b-a4b
+CLAUDE_MAX_TURNS=4
+AGENT_OUTPUTS_ROOT=/app/outputs
 ```
 
 若要直連 Anthropic，則把 `ANTHROPIC_BASE_URL` 拿掉，並將 `ANTHROPIC_API_KEY` 換成真實金鑰。
@@ -92,6 +106,8 @@ docker build -f Dockerfile -t emoji-trigger-agent:latest .
 使用 compose 啟動：
 
 ```bash
+mkdir -p outputs
+chmod 777 outputs
 docker compose up --build -d
 ```
 
@@ -113,7 +129,9 @@ docker compose logs -f bot
 - agents/{agent-id}/: 單一 runtime agent 的專屬工作目錄，Claude SDK 執行時會將 `cwd` 指向這裡
 - agents/{agent-id}/.claude/agents/{agent-id}.md: Claude Code filesystem-based agent 定義
 - agents/{agent-id}/.claude/skills/{skill-id}/SKILL.md: 該 agent 專屬或共置的 skills
+- agents/{agent-id}/.claude/skills/{skill-id}/*: 可由 skill 呼叫的腳本或其他資產
 - agents/{agent-id}/.mcp.json: 該 agent 專屬 MCP 設定（若需要）
+- outputs/: host 端持久化輸出目錄，compose 會掛到容器內的 `/app/outputs`
 
 說明：
 
@@ -129,8 +147,8 @@ docker compose logs -f bot
 routes:
   - emoji: "📝"
     agent_id: "memo-agent"
-    params:
-      output_file: "claude/runtime/memo.txt"
+    disallowed_tools:
+      - "Skill"
 ```
 
 2. 建立對應的 agent 工作目錄：
@@ -144,6 +162,8 @@ agents/
       skills/
         memo-write/
           SKILL.md
+          scripts/
+            write_channel_memo.py
     .mcp.json   # optional
 ```
 
@@ -154,6 +174,8 @@ agents/
 - `agent_id` 會同時用在 manifest、目錄名稱，以及 agent markdown frontmatter 的 `name`
 - Claude Code subagent 的 `name` 需使用小寫加連字號，例如 `memo-agent`
 - 若要讓 agent 使用 project skills，skill 需放在該 agent 工作目錄底下的 `.claude/skills/`
+- 若 skill 需要固定腳本，直接放在對應 skill 目錄中，讓 agent 只在觸發時傳入 runtime 參數
+- 若某個 route 需要限制 Claude 可用工具，可在 `agents/agents.yaml` 透過 `allowed_tools` / `disallowed_tools` 宣告
 - 若要讓 agent 使用 project MCP，自訂 MCP 設定請放在該 agent 工作目錄底下的 `.mcp.json`
 
 ## 7) memo 範例
@@ -161,7 +183,8 @@ agents/
 預設已提供 📝 對應 `memo-agent`：
 
 - 觸發方式：訊息包含 📝，或對訊息加上 📝 reaction
-- 行為：`memo-agent` 會在 `agents/memo-agent/` 作為 `cwd` 執行，並依照其 `.claude` 內容與 skill 寫入 `claude/runtime/memo.txt`
+- 去重規則：同一則訊息的同一個 emoji 只會成功觸發一次；後續同 emoji 的重複 reaction 或訊息內重複出現不會再次執行
+- 行為：應用程式會把完整 Discord 訊息上下文與觸發資訊交給 `memo-agent`，再由 agent 透過 skill script 寫入 `/app/outputs/memo-agent/<channel-id>.md`
 - 回覆：bot 不會自動回傳完成訊息到頻道
 
 注意：Bot 不會對任意 emoji 觸發，只有 `agents/agents.yaml` 內有設定的 emoji 才會觸發。
@@ -175,6 +198,7 @@ agents/
 - Developer Portal 的 Message Content Intent 是否已開啟
 - 環境中是否正確提供 `ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN`
 - 若有設定 `ANTHROPIC_BASE_URL`，該 endpoint 是否真的接受你選的驗證 header
+- `/app/outputs` 對容器內的 `nonroot` 使用者是否可寫；若使用 bind mount，先在 host 端執行 `mkdir -p outputs && chmod 777 outputs`
 - 對應的 agent 目錄下是否存在 `agents/{agent-id}/.claude/agents/{agent-id}.md`
 
 可透過環境變數提高 log 詳細度：

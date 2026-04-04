@@ -158,7 +158,8 @@ env.bak/
 venv.bak/
 
 # Runtime outputs
-claude/runtime/
+outputs/*
+!outputs/.gitignore
 
 # Spyder project settings
 .spyderproject

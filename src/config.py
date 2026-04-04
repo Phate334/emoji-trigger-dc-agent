@@ -20,6 +20,7 @@ class Settings(BaseSettings):
         anthropic_auth_token: Custom Authorization bearer token (optional)
         claude_model: Default Claude model id for all routes (optional)
         claude_max_turns: Maximum Claude turns per triggered task
+        agent_outputs_root: Root directory for persistent agent outputs
         anthropic_base_url: Custom base URL for Claude API (optional)
     """
 
@@ -36,6 +37,7 @@ class Settings(BaseSettings):
     anthropic_auth_token: str | None = None
     claude_model: str | None = None
     claude_max_turns: int = 4
+    agent_outputs_root: str = "/app/outputs"
 
     # Optional: Custom base URL for Claude API (for proxy or alternative endpoints)
     anthropic_base_url: str | None = None
@@ -48,7 +50,7 @@ class Settings(BaseSettings):
         normalized = value.strip()
         return normalized or None
 
-    @field_validator("claude_model", "anthropic_base_url")
+    @field_validator("claude_model", "anthropic_base_url", "agent_outputs_root")
     @classmethod
     def normalize_optional_str(cls, value: str | None) -> str | None:
         if value is None:
@@ -94,6 +96,10 @@ class Settings(BaseSettings):
     def get_emoji_agent_manifest_path(self) -> Path:
         """Get emoji agent manifest as a Path object."""
         return Path(self.emoji_agent_manifest)
+
+    def get_agent_outputs_root_path(self) -> Path:
+        """Get the persistent agent output root as a Path object."""
+        return Path(self.agent_outputs_root)
 
     def uses_official_anthropic_api(self) -> bool:
         """Return True when the configured endpoint points at Anthropic directly."""

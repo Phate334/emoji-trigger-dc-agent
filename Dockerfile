@@ -32,14 +32,15 @@ WORKDIR /app
 
 COPY --from=builder --chown=nonroot:nonroot /app /app
 
-# Ensure runtime directory exists with open permissions
-# This will be adjusted by entrypoint if needed
-RUN mkdir -p /app/claude/runtime && \
-    chmod 777 /app/claude/runtime
+# Ensure persistent output directory exists with open permissions.
+# Bind-mounted host paths still need compatible ownership or mode.
+RUN mkdir -p /app/outputs && \
+    chmod 777 /app/outputs
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    EMOJI_AGENT_MANIFEST=/app/agents/agents.yaml
+    EMOJI_AGENT_MANIFEST=/app/agents/agents.yaml \
+    AGENT_OUTPUTS_ROOT=/app/outputs
 
 USER nonroot
 

@@ -158,7 +158,7 @@ env.bak/
 venv.bak/
 
 # Runtime outputs
-claude/runtime/
+outputs/
 
 # Spyder project settings
 .spyderproject

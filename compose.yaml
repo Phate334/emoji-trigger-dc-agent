@@ -8,7 +8,7 @@ services:
     depends_on:
       - llm
     volumes:
-      - ./claude/runtime:/app/claude/runtime
+      - ./outputs:/app/outputs
 
   llm:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda-b8643
