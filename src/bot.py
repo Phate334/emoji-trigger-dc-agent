@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from pathlib import Path
 
 import discord
 
 from .agent_manifest import AgentManifest, AgentRoute
-from .executor import AgentExecutor, TriggerContext
+from .executor import AgentExecutor, ExecutionResult, TriggerContext
 
 logger = logging.getLogger("emoji-trigger-agent")
 
@@ -21,17 +18,14 @@ class TriggerKey:
     emoji: str
 
 
-class TriggerLedger:
-    def __init__(self, state_file: Path) -> None:
-        self.state_file = state_file
-        self._loaded = False
+class TriggerDeduper:
+    def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._completed: set[TriggerKey] = set()
         self._in_progress: set[TriggerKey] = set()
 
     async def begin(self, key: TriggerKey) -> bool:
         async with self._lock:
-            self._load_if_needed()
             if key in self._completed or key in self._in_progress:
                 return False
             self._in_progress.add(key)
@@ -48,51 +42,21 @@ class TriggerLedger:
         async with self._lock:
             self._completed.add(key)
             self._in_progress.discard(key)
-            self._append_record(
+            logger.debug(
+                "Trigger completed: %s",
                 {
-                    "processed_at": datetime.now(UTC).isoformat(),
                     "message_id": key.message_id,
                     "emoji": key.emoji,
                     "agent_id": agent_id,
                     "channel_id": channel_id,
                     "trigger_source": trigger.source,
                     "trigger_user_id": trigger.user_id,
-                }
+                },
             )
 
     async def abort(self, key: TriggerKey) -> None:
         async with self._lock:
             self._in_progress.discard(key)
-
-    def _load_if_needed(self) -> None:
-        if self._loaded:
-            return
-        self._loaded = True
-        if not self.state_file.is_file():
-            return
-
-        with self.state_file.open("r", encoding="utf-8") as file:
-            for raw_line in file:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    item = json.loads(line)
-                except json.JSONDecodeError:
-                    logger.warning("Skipping malformed trigger ledger line: %s", line)
-                    continue
-                message_id = item.get("message_id")
-                emoji = item.get("emoji")
-                if isinstance(message_id, int) and isinstance(emoji, str) and emoji:
-                    self._completed.add(TriggerKey(message_id=message_id, emoji=emoji))
-
-    def _append_record(self, record: dict[str, object]) -> None:
-        try:
-            self.state_file.parent.mkdir(parents=True, exist_ok=True)
-            with self.state_file.open("a", encoding="utf-8") as file:
-                file.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError:
-            logger.exception("Failed to persist trigger ledger record to %s", self.state_file)
 
 
 class EmojiTriggerBot(discord.Client):
@@ -101,12 +65,12 @@ class EmojiTriggerBot(discord.Client):
         intents: discord.Intents,
         manifest: AgentManifest,
         executor: AgentExecutor,
-        trigger_ledger: TriggerLedger,
+        trigger_deduper: TriggerDeduper,
     ):
         super().__init__(intents=intents)
         self.manifest = manifest
         self.executor = executor
-        self.trigger_ledger = trigger_ledger
+        self.trigger_deduper = trigger_deduper
 
     async def on_ready(self) -> None:
         if self.user is None:
@@ -221,7 +185,7 @@ class EmojiTriggerBot(discord.Client):
         trigger: TriggerContext,
     ) -> None:
         key = TriggerKey(message_id=message.id, emoji=trigger.emoji)
-        if not await self.trigger_ledger.begin(key):
+        if not await self.trigger_deduper.begin(key):
             logger.info(
                 "Skipping duplicate trigger for message %s emoji %s",
                 message.id,
@@ -232,19 +196,18 @@ class EmojiTriggerBot(discord.Client):
         try:
             result = await self.executor.execute(route, message, trigger)
         except Exception:
-            await self.trigger_ledger.abort(key)
+            await self.trigger_deduper.abort(key)
             logger.exception("Failed to handle trigger for emoji %s", route.emoji)
             return
 
-        await self.trigger_ledger.complete(
+        await self.trigger_deduper.complete(
             key,
             agent_id=route.agent_id,
             channel_id=message.channel.id,
             trigger=trigger,
         )
 
-        if result.strip():
-            logger.debug("Agent output suppressed from channel: %s", result)
+        _log_execution_result(result)
 
         logger.info(
             "Triggered task from %s emoji %s in channel %s via agent %s",
@@ -259,10 +222,19 @@ def build_client(manifest: AgentManifest, executor: AgentExecutor) -> EmojiTrigg
     intents = discord.Intents.default()
     intents.message_content = True
     intents.reactions = True
-    trigger_ledger = TriggerLedger(executor.outputs_root / ".state" / "processed-triggers.jsonl")
+    trigger_deduper = TriggerDeduper()
     return EmojiTriggerBot(
         intents=intents,
         manifest=manifest,
         executor=executor,
-        trigger_ledger=trigger_ledger,
+        trigger_deduper=trigger_deduper,
+    )
+
+
+def _log_execution_result(result: ExecutionResult) -> None:
+    if result.agent_output.strip():
+        logger.debug("Agent output suppressed from channel: %s", result.agent_output)
+    logger.debug(
+        "Verified agent output files: %s",
+        ", ".join(str(path) for path in result.changed_output_files),
     )

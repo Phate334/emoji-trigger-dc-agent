@@ -2,5 +2,7 @@ version: 1
 routes:
   - emoji: "📝"
     agent_id: "memo-agent"
+    allowed_tools:
+      - "Bash(python3 .claude/skills/memo-write/scripts/write_channel_memo.py --event-json *)"
     disallowed_tools:
       - "Skill"

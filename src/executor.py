@@ -4,6 +4,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 import discord
@@ -38,6 +39,12 @@ class TriggerContext:
     user_id: int | None = None
 
 
+@dataclass(slots=True, frozen=True)
+class ExecutionResult:
+    agent_output: str
+    changed_output_files: tuple[Path, ...]
+
+
 class AgentExecutor:
     def __init__(
         self,
@@ -56,7 +63,7 @@ class AgentExecutor:
         route: AgentRoute,
         message: discord.Message,
         trigger: TriggerContext,
-    ) -> str:
+    ) -> ExecutionResult:
         return await self._run_claude_turn(route, message, trigger)
 
     async def _run_claude_turn(
@@ -64,18 +71,43 @@ class AgentExecutor:
         route: AgentRoute,
         message: discord.Message,
         trigger: TriggerContext,
-    ) -> str:
+    ) -> ExecutionResult:
         if query is None or ClaudeAgentOptions is None:
-            return "Claude Agent SDK is not installed yet. Run uv sync and retry."
+            return ExecutionResult(
+                agent_output="Claude Agent SDK is not installed yet. Run uv sync and retry.",
+                changed_output_files=(),
+            )
         if not route.agent_file.exists():
-            return f"Missing Claude agent file: {route.agent_file}"
+            return ExecutionResult(
+                agent_output=f"Missing Claude agent file: {route.agent_file}",
+                changed_output_files=(),
+            )
 
         agent_output_dir = (self.outputs_root / route.agent_id).resolve()
         agent_output_dir.mkdir(parents=True, exist_ok=True)
+        before_snapshot = _snapshot_output_tree(agent_output_dir)
+        payload = self._build_payload(route, message, trigger, agent_output_dir)
+        runtime_context_file = _write_runtime_context_file(route.agent_dir, payload)
 
-        prompt = self._build_prompt(route, message, trigger, agent_output_dir)
-        options = self._build_claude_options(route, agent_output_dir)
-        return await _run_claude_query(prompt, options)
+        try:
+            prompt = self._build_prompt(payload, runtime_context_file)
+            options = self._build_claude_options(route, agent_output_dir)
+            agent_output = await _run_claude_query(prompt, options)
+            changed_output_files = _detect_output_changes(agent_output_dir, before_snapshot)
+            if not changed_output_files:
+                if agent_output.strip():
+                    logger.error("Claude agent returned without file changes: %s", agent_output)
+                raise RuntimeError(
+                    "Claude agent finished without producing any file changes under "
+                    f"{agent_output_dir}"
+                )
+
+            return ExecutionResult(
+                agent_output=agent_output,
+                changed_output_files=changed_output_files,
+            )
+        finally:
+            runtime_context_file.unlink(missing_ok=True)
 
     def _build_claude_options(
         self,
@@ -103,14 +135,14 @@ class AgentExecutor:
             stderr=_stderr_callback,
         )
 
-    def _build_prompt(
+    def _build_payload(
         self,
         route: AgentRoute,
         message: discord.Message,
         trigger: TriggerContext,
         agent_output_dir: Path,
-    ) -> str:
-        payload = {
+    ) -> dict[str, Any]:
+        return {
             "agent": {
                 "agent_id": route.agent_id,
                 "agent_output_dir": str(agent_output_dir),
@@ -130,7 +162,16 @@ class AgentExecutor:
             },
             "message": _serialize_message(message),
         }
-        rendered_payload = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+
+    def _build_prompt(self, payload: dict[str, Any], runtime_context_file: Path) -> str:
+        prompt_payload = {
+            **payload,
+            "agent": {
+                **payload["agent"],
+                "runtime_context_file": str(runtime_context_file),
+            },
+        }
+        rendered_payload = json.dumps(prompt_payload, ensure_ascii=False, indent=2, sort_keys=True)
 
         return "\n".join(
             [
@@ -140,6 +181,11 @@ class AgentExecutor:
                     "and project MCP setup to decide and execute the follow-up behavior."
                 ),
                 "The application already de-duplicates triggers by message_id + emoji.",
+                (
+                    "The full runtime JSON context is also available on disk at "
+                    "agent.runtime_context_file. Use that file as the source of truth "
+                    "when invoking deterministic scripts."
+                ),
                 (
                     "Write durable files under agent.agent_output_dir unless your route "
                     "explicitly says otherwise."
@@ -272,6 +318,49 @@ def _normalize_json_value(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_normalize_json_value(item) for item in value]
     return value
+
+
+def _write_runtime_context_file(agent_dir: Path, payload: dict[str, Any]) -> Path:
+    runtime_dir = agent_dir / ".runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix="trigger-",
+        suffix=".json",
+        dir=runtime_dir,
+        delete=False,
+    ) as file:
+        json.dump(payload, file, ensure_ascii=False, indent=2, sort_keys=True)
+        file.write("\n")
+        return Path(file.name)
+
+
+def _snapshot_output_tree(base_dir: Path) -> dict[Path, tuple[int, int]]:
+    snapshot: dict[Path, tuple[int, int]] = {}
+    if not base_dir.exists():
+        return snapshot
+
+    for path in sorted(p for p in base_dir.rglob("*") if p.is_file()):
+        stat = path.stat()
+        snapshot[path] = (stat.st_mtime_ns, stat.st_size)
+    return snapshot
+
+
+def _detect_output_changes(
+    base_dir: Path,
+    before_snapshot: dict[Path, tuple[int, int]],
+) -> tuple[Path, ...]:
+    changed: list[Path] = []
+    if not base_dir.exists():
+        return ()
+
+    for path in sorted(p for p in base_dir.rglob("*") if p.is_file()):
+        stat = path.stat()
+        current = (stat.st_mtime_ns, stat.st_size)
+        if before_snapshot.get(path) != current:
+            changed.append(path)
+    return tuple(changed)
 
 
 async def _run_claude_query(prompt: str, options: ClaudeAgentOptions) -> str:

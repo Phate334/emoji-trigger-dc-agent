@@ -15,21 +15,21 @@ Append one markdown memo entry for the triggered Discord message into:
 `agent.agent_output_dir/<message.channel.id>.md`
 
 ## Inputs
-The runtime prompt contains a JSON object with:
+The runtime prompt contains a JSON object and a runtime context file path with:
 - `agent.agent_output_dir`
-- `trigger.emoji`
-- `trigger.source`
-- `trigger.user_id`
+- `agent.runtime_context_file`
+- `trigger`
 - `message` metadata, including channel, author, timestamps, jump URL, and full content
 
 ## Required behavior
-1. Read the real values from the runtime JSON payload.
+1. Use `agent.runtime_context_file` as the canonical source of runtime values.
 2. Use the preloaded `memo-write` skill instructions as the canonical write procedure.
 3. Do not generate an inline Python script yourself.
 4. Do not use the `Skill` tool for this task.
-5. Run the bundled memo-write script with `Bash`, passing the runtime values from the JSON payload.
-6. The output path is decided at runtime from `agent.agent_output_dir` and `message.channel.id`.
+5. Run the bundled memo-write script with `Bash`, passing only the runtime context file path.
+6. The output path is decided at runtime from the context file data.
 7. The appended markdown entry must include the triggering emoji and the original message content.
-8. Verify the target markdown file exists after the script succeeds.
-9. Do not ask follow-up questions.
-10. Return a short completion response only after the write script succeeds.
+8. Do not use ad hoc shell redirection or any Bash command other than the bundled memo-write script invocation.
+9. Treat a zero-exit memo-write script run as success; the application separately verifies the file change.
+10. Do not ask follow-up questions.
+11. Return a short completion response only after the write script succeeds.

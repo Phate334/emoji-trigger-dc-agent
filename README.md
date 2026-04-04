@@ -1,32 +1,77 @@
 # emoji-trigger-agent
 
-使用 Python 3.13 + uv + discord.py 的 emoji 觸發 Discord bot。
+使用 Python 3.13、`discord.py` 與 `claude-agent-sdk` 的 Discord emoji 觸發 bot。
 
-此版本使用單一設定檔 `agents/agents.yaml` 管理 emoji 到 runtime agent 的對應。每個被觸發的 agent 都有自己的工作目錄 `agents/<agent-id>/`，並且只載入該目錄下的 Claude project `.claude` 設定，避免與專案開發時使用的全域或 repo-level agent 設定互相干擾。
+這個專案刻意把「平台邏輯」和「agent 行為」拆成兩層：
 
-## 1) 安裝依賴
+- `src/`：負責 Discord 事件處理、設定、路由載入、程序內去重、Claude 執行與輸出驗證
+- `agents/`：負責每個 runtime Claude agent 的 Claude Code project 設定，例如 `AGENTS.md`、prompt、skills、scripts 與 MCP
+
+這樣新增或調整某個 agent 時，通常只需要改 `agents/`，不必把 agent-specific 行為寫死進應用程式。
+
+## 1) 架構總覽
+
+### 目錄責任
+
+| 目錄 | 角色 |
+|---|---|
+| `src/` | 應用程式 runtime 平台層。負責 Discord 事件 intake、manifest 載入、程序內去重、Claude 執行、成功條件驗證。 |
+| `agents/` | 宣告式 agent 層。每個 agent 都是獨立的 Claude Code project，具備自己的 `AGENTS.md`、agent markdown、skills、scripts、可選 MCP。 |
+| `outputs/` | durable runtime outputs。host 端會 bind mount 到容器內 `/app/outputs`。 |
+
+### `src/` 負責什麼
+
+- 讀取環境變數與應用設定
+- 從 `agents/agents.yaml` 載入 emoji route
+- 接收 Discord 訊息與 reaction 事件
+- 擷取完整 Discord message context 並轉成 JSON 交給 Claude agent
+- 以 `message_id + emoji` 做程序內成功去重
+- 驗證 agent 執行後，`/app/outputs/<agent-id>/` 底下是否真的有新檔案或檔案變更
+- 只有在驗證通過後，才把成功 trigger 記錄輸出到 debug log
+
+### `agents/` 負責什麼
+
+- 宣告某個 emoji 要交給哪個 agent
+- 讓每個 `agents/<agent-id>/` 都作為獨立 Claude Code project 維護
+- 透過 agent-local `AGENTS.md` 說明這個 agent 的目標、限制、成功條件與 skill 佈局
+- 定義 agent 的 system prompt / 行為目標
+- 定義可重用的 skills
+- 提供預寫好的 scripts，讓 agent 直接執行明確程式碼，而不是臨時生成腳本
+- 定義 agent 專屬 MCP 設定（如果需要）
+
+### 單次 trigger 流程
+
+1. Discord 訊息或 reaction 事件進入 `src/bot.py`
+2. `src/agent_manifest.py` 從 `agents/agents.yaml` 找到對應 route
+3. `src/bot.py` 檢查這個 `message_id + emoji` 是否已成功處理過
+4. `src/executor.py` 建立完整 JSON context，並在 `agents/<agent-id>/` 作為 Claude `cwd` 執行 agent
+5. agent 依自己的 `.claude/agents/*.md`、skills、scripts 決定並執行後續動作
+6. `src/executor.py` 驗證 `/app/outputs/<agent-id>/` 是否真的有檔案變更
+7. 驗證成功後才輸出成功 trigger 的 debug log
+
+## 2) 安裝依賴
 
 ```bash
 uv sync
 ```
 
-專案已內建 claude-agent-sdk 依賴，Claude Code CLI 由套件內建，不需額外安裝系統 CLI。
+專案已包含 `claude-agent-sdk` 依賴；Claude Code CLI 由套件內建，不需要另外安裝系統 CLI。
 
-## 2) 設定環境變數
+## 3) 設定環境變數
 
 至少提供一種 Claude 驗證方式：
 
-- `ANTHROPIC_API_KEY`: 官方 Anthropic API / Claude Agent SDK 標準設定，會走 `X-Api-Key`
-- `ANTHROPIC_AUTH_TOKEN`: Claude Code 的替代設定，會走 `Authorization: Bearer ...`，適合 proxy / gateway
+- `ANTHROPIC_API_KEY`
+- `ANTHROPIC_AUTH_TOKEN`
 
-直連 Anthropic 官方 API：
+直連 Anthropic：
 
 ```bash
 export DISCORD_BOT_TOKEN="你的 token"
 export ANTHROPIC_API_KEY="你的 anthropic key"
 ```
 
-如果是走需要 bearer token 的 proxy / gateway，請改用：
+走 bearer token 的 proxy / gateway：
 
 ```bash
 export DISCORD_BOT_TOKEN="你的 token"
@@ -34,50 +79,35 @@ export ANTHROPIC_AUTH_TOKEN="你的 gateway bearer token"
 export ANTHROPIC_BASE_URL="https://your-gateway.example.com"
 ```
 
-如果不是直接連 Anthropic，而是走本機 LLM endpoint 或相容 proxy，可設定：
+走本機相容 endpoint：
 
 ```bash
 export ANTHROPIC_API_KEY="sk-temp"
 export ANTHROPIC_BASE_URL="http://localhost:8080"
 ```
 
-只要 `ANTHROPIC_BASE_URL` 指向自訂 endpoint，`ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN` 擇一提供即可，實際要用哪個取決於該 endpoint 期待哪種 header。
-
-可選：指定預設模型 ID（所有 route 共用，若 route 有設定 model 會覆蓋）
+可選設定：
 
 ```bash
 export CLAUDE_MODEL="claude-sonnet-4-5"
-```
-
-可選：指定 Claude agent 單次任務可用的最大 turns 數，預設為 `4`
-
-```bash
 export CLAUDE_MAX_TURNS="4"
-```
-
-可選：覆蓋 agent 持久化輸出根目錄，預設為 `/app/outputs`
-
-```bash
 export AGENT_OUTPUTS_ROOT="/app/outputs"
-```
-
-可選：覆蓋 manifest 路徑
-
-```bash
 export EMOJI_AGENT_MANIFEST="agents/agents.yaml"
 ```
 
-## 3) 啟動
+## 4) 啟動
+
+### 本機啟動
 
 ```bash
 uv run python -m src.app
 ```
 
-## 3-1) Docker 啟動（uv 兩階段打包）
+### Docker / Compose 啟動
 
-先建立 .env：
+先準備 `.env`：
 
-```bash
+```ini
 DISCORD_BOT_TOKEN=你的 token
 ANTHROPIC_API_KEY=sk-temp
 ANTHROPIC_BASE_URL=http://llm:8080
@@ -86,28 +116,22 @@ CLAUDE_MAX_TURNS=4
 AGENT_OUTPUTS_ROOT=/app/outputs
 ```
 
-若要直連 Anthropic，則把 `ANTHROPIC_BASE_URL` 拿掉，並將 `ANTHROPIC_API_KEY` 換成真實金鑰。
-
-若要接需要 bearer token 的 gateway，則可改成：
-
-```bash
-DISCORD_BOT_TOKEN=你的 token
-ANTHROPIC_AUTH_TOKEN=你的 gateway bearer token
-ANTHROPIC_BASE_URL=https://your-gateway.example.com
-CLAUDE_MODEL=你的模型名稱
-```
-
 建置映像：
 
 ```bash
 docker build -f Dockerfile -t emoji-trigger-agent:latest .
 ```
 
-使用 compose 啟動：
+首次啟動前先準備 outputs 目錄：
 
 ```bash
 mkdir -p outputs
 chmod 777 outputs
+```
+
+啟動：
+
+```bash
 docker compose up --build -d
 ```
 
@@ -117,100 +141,139 @@ docker compose up --build -d
 docker compose logs -f bot
 ```
 
-## 4) Discord 必要設定
+## 5) Discord 必要設定
 
-- 啟用 MESSAGE CONTENT INTENT
-- Bot 需有讀取訊息、讀取歷史、reaction 權限
+- 啟用 `MESSAGE CONTENT INTENT`
+- Bot 需有 `Read Message History`
+- Bot 需有 `Add Reactions`
+- Bot 需有 `Read Messages/View Channels`
 
-## 5) 固定目錄規約
+完整申請流程可參考 [docs/discord-setup.md](/home/phate/emoji-trigger-agent/docs/discord-setup.md)。
 
-- AGENTS.md: 專案層級協作與規約說明
-- agents/agents.yaml: 唯一執行期 emoji route 設定
-- agents/{agent-id}/: 單一 runtime agent 的專屬工作目錄，Claude SDK 執行時會將 `cwd` 指向這裡
-- agents/{agent-id}/.claude/agents/{agent-id}.md: Claude Code filesystem-based agent 定義
-- agents/{agent-id}/.claude/skills/{skill-id}/SKILL.md: 該 agent 專屬或共置的 skills
-- agents/{agent-id}/.claude/skills/{skill-id}/*: 可由 skill 呼叫的腳本或其他資產
-- agents/{agent-id}/.mcp.json: 該 agent 專屬 MCP 設定（若需要）
-- outputs/: host 端持久化輸出目錄，compose 會掛到容器內的 `/app/outputs`
+## 6) 專案固定結構
 
-說明：
+```text
+src/
+  app.py                # 啟動入口
+  config.py             # env / settings
+  agent_manifest.py     # agents.yaml schema 與驗證
+  bot.py                # Discord 事件 intake 與程序內去重
+  executor.py           # Claude 執行、prompt payload、輸出驗證
 
-- 專案根目錄不使用 repo-level `.claude/` 來存放這些被 emoji 觸發的 runtime agent 設定
-- 執行時會將 Claude SDK 的 `cwd` 指向 `agents/{agent-id}/`
-- 並且只載入該 agent 目錄的 project 設定，確保不同 agent 間的 skills、MCP 與 agent 定義彼此隔離
+agents/
+  agents.yaml           # 唯一 runtime route manifest
+  <agent-id>/
+    AGENTS.md           # 該 agent 專屬的 Claude Code project 說明
+    .claude/
+      agents/
+        <agent-id>.md   # Claude agent 定義
+      skills/
+        <skill-id>/
+          SKILL.md
+          scripts/      # 預寫 scripts / supporting files
+    .mcp.json           # optional
 
-## 6) 建立新的 emoji agent
+outputs/
+  <agent-id>/
+    ...agent outputs...
+```
 
-1. 在 `agents/agents.yaml` 加入新的 route：
+## 7) Route Manifest
+
+runtime routing 統一由 `agents/agents.yaml` 控制。基本範例：
 
 ```yaml
+version: 1
 routes:
   - emoji: "📝"
     agent_id: "memo-agent"
+    allowed_tools:
+      - "Bash(python3 .claude/skills/memo-write/scripts/write_channel_memo.py --event-json *)"
     disallowed_tools:
       - "Skill"
 ```
 
-2. 建立對應的 agent 工作目錄：
+支援的欄位由 `src/agent_manifest.py` 解析，包含：
 
-```text
-agents/
-  memo-agent/
-    .claude/
-      agents/
-        memo-agent.md
-      skills/
-        memo-write/
-          SKILL.md
-          scripts/
-            write_channel_memo.py
-    .mcp.json   # optional
-```
+- `emoji`
+- `agent_id`
+- `params`
+- `model`
+- `reasoning_effort`
+- `allowed_tools`
+- `disallowed_tools`
 
-3. 在 `agents/<agent-id>/.claude/agents/<agent-id>.md` 中建立 Claude Code agent 定義。
+原則：
+
+- route 要保持 declarative
+- 不要把 emoji routing 寫死在 `src/`
+- 若某個 agent 需要限制 Claude 可用工具，放在 manifest，而不是寫死在 app code
+- 對有 side effect 的 agent，優先把 `allowed_tools` 收斂到預寫 script 的固定 Bash 前綴，必要時連固定旗標一起限制
+
+## 8) 建立新的 Agent
+
+1. 在 `agents/agents.yaml` 加入 route
+2. 建立 `agents/<agent-id>/`
+3. 建立 `agents/<agent-id>/AGENTS.md`，把這個 agent 當成單一 Claude Code project 來描述目標、限制與 skill 佈局
+4. 建立 `agents/<agent-id>/.claude/agents/<agent-id>.md`
+5. 若需要 skill，建立 `agents/<agent-id>/.claude/skills/<skill-id>/SKILL.md`
+6. 若需要 side effect script，放在 `agents/<agent-id>/.claude/skills/<skill-id>/scripts/`
+7. 讓 agent 直接執行預寫 script，不要在 runtime 動態生成腳本
+8. 讓 agent 的 durable output 落在 `/app/outputs/<agent-id>/`
+
+建議判斷方式：
+
+- 如果是所有 agent 都共用的能力，改 `src/`
+- 如果只是某個 agent 的行為或輸出格式，改 `agents/`
+- 如果某個規則只屬於單一 agent project，優先寫在該 agent 的 `AGENTS.md`
+
+## 9) Memo Agent 範例
+
+預設已提供 `📝 -> memo-agent`：
+
+- 觸發方式：訊息內容包含 `📝`，或對訊息加上 `📝` reaction
+- 去重規則：同一則訊息的同一個 emoji 在同一次 bot 執行期間只會成功觸發一次
+- 行為：`src/` 會把完整 Discord message context 交給 `memo-agent`
+- `memo-agent` 會執行 skill 內的預寫 script
+- 輸出會寫到 `/app/outputs/memo-agent/<channel-id>.md`
+
+## 10) Outputs
+
+`outputs/` 目前只放 agent 的 durable outputs：
+
+- `outputs/<agent-id>/`：agent 的 durable outputs，例如 `memo-agent` 寫出的 markdown
 
 注意：
 
-- `agent_id` 會同時用在 manifest、目錄名稱，以及 agent markdown frontmatter 的 `name`
-- Claude Code subagent 的 `name` 需使用小寫加連字號，例如 `memo-agent`
-- 若要讓 agent 使用 project skills，skill 需放在該 agent 工作目錄底下的 `.claude/skills/`
-- 若 skill 需要固定腳本，直接放在對應 skill 目錄中，讓 agent 只在觸發時傳入 runtime 參數
-- 若某個 route 需要限制 Claude 可用工具，可在 `agents/agents.yaml` 透過 `allowed_tools` / `disallowed_tools` 宣告
-- 若要讓 agent 使用 project MCP，自訂 MCP 設定請放在該 agent 工作目錄底下的 `.mcp.json`
+- app 不再把去重狀態寫入磁碟
+- 成功 trigger 只會在 debug log 中留下紀錄
+- 如果 Claude 只回了一句成功，但沒有實際檔案變更，現在會被視為失敗
+- bot 重啟後，程序內的成功去重狀態會清空
 
-## 7) memo 範例
+## 11) Troubleshooting
 
-預設已提供 📝 對應 `memo-agent`：
+若 Bot 已上線但沒有產生輸出，先檢查：
 
-- 觸發方式：訊息包含 📝，或對訊息加上 📝 reaction
-- 去重規則：同一則訊息的同一個 emoji 只會成功觸發一次；後續同 emoji 的重複 reaction 或訊息內重複出現不會再次執行
-- 行為：應用程式會把完整 Discord 訊息上下文與觸發資訊交給 `memo-agent`，再由 agent 透過 skill script 寫入 `/app/outputs/memo-agent/<channel-id>.md`
-- 回覆：bot 不會自動回傳完成訊息到頻道
+- emoji 是否與 `agents/agents.yaml` 完全一致
+- Bot 是否有 `View Channels`、`Read Message History`、`Add Reactions`
+- Developer Portal 的 `Message Content Intent` 是否已啟用
+- `ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN` 是否正確
+- 若有設定 `ANTHROPIC_BASE_URL`，該 endpoint 是否接受你提供的 header
+- host 端 `outputs/` 是否可寫
+- `agents/<agent-id>/.claude/agents/<agent-id>.md` 是否存在
+- `agents/<agent-id>/.claude/skills/...` 是否存在
+- 若 bot 剛重啟過，要注意程序內去重狀態已清空
 
-注意：Bot 不會對任意 emoji 觸發，只有 `agents/agents.yaml` 內有設定的 emoji 才會觸發。
-
-## 8) Troubleshooting 與 Debug Log
-
-若 Bot 已上線但沒有觸發，先確認：
-
-- 送出的 emoji 是否與 `agents/agents.yaml` 完全一致（預設只有 📝）
-- Bot 在該頻道是否具備 View Channels、Read Message History、Add Reactions
-- Developer Portal 的 Message Content Intent 是否已開啟
-- 環境中是否正確提供 `ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN`
-- 若有設定 `ANTHROPIC_BASE_URL`，該 endpoint 是否真的接受你選的驗證 header
-- `/app/outputs` 對容器內的 `nonroot` 使用者是否可寫；若使用 bind mount，先在 host 端執行 `mkdir -p outputs && chmod 777 outputs`
-- 對應的 agent 目錄下是否存在 `agents/{agent-id}/.claude/agents/{agent-id}.md`
-
-可透過環境變數提高 log 詳細度：
+可提高 log 詳細度：
 
 ```bash
 LOG_LEVEL=DEBUG DISCORD_LOG_LEVEL=DEBUG docker compose up --build -d
 docker compose logs -f bot
 ```
 
-如果使用 .env，可加入：
+如果你看到 log 顯示成功，但沒有 `outputs/<agent-id>/` 檔案，代表 app 的成功判定有 bug，這種情況不應再發生。
 
-```ini
-LOG_LEVEL=DEBUG
-DISCORD_LOG_LEVEL=DEBUG
-```
+## 12) 補充文件
+
+- [AGENTS.md](/home/phate/emoji-trigger-agent/AGENTS.md): 專案協作與目錄邊界
+- [docs/discord-setup.md](/home/phate/emoji-trigger-agent/docs/discord-setup.md): Discord Bot 建立流程
