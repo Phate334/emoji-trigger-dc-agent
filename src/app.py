@@ -19,6 +19,7 @@ def run() -> None:
     manifest = load_agent_manifest(settings.get_emoji_agent_manifest_path())
     executor = AgentExecutor(
         default_model_id=settings.claude_model,
+        max_turns=settings.claude_max_turns,
         sdk_env=settings.build_claude_sdk_env(),
     )
     client = build_client(manifest=manifest, executor=executor)

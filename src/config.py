@@ -19,6 +19,7 @@ class Settings(BaseSettings):
         anthropic_api_key: Anthropic API key (optional)
         anthropic_auth_token: Custom Authorization bearer token (optional)
         claude_model: Default Claude model id for all routes (optional)
+        claude_max_turns: Maximum Claude turns per triggered task
         anthropic_base_url: Custom base URL for Claude API (optional)
     """
 
@@ -34,6 +35,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     anthropic_auth_token: str | None = None
     claude_model: str | None = None
+    claude_max_turns: int = 4
 
     # Optional: Custom base URL for Claude API (for proxy or alternative endpoints)
     anthropic_base_url: str | None = None
@@ -53,6 +55,13 @@ class Settings(BaseSettings):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("claude_max_turns")
+    @classmethod
+    def validate_claude_max_turns(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("CLAUDE_MAX_TURNS must be at least 1")
+        return value
 
     @model_validator(mode="after")
     def validate_anthropic_configuration(self) -> Self:

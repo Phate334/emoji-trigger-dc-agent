@@ -32,9 +32,11 @@ class AgentExecutor:
     def __init__(
         self,
         default_model_id: str | None = None,
+        max_turns: int = 4,
         sdk_env: dict[str, str] | None = None,
     ) -> None:
         self.default_model_id = default_model_id
+        self.max_turns = max_turns
         self.sdk_env = dict(sdk_env or {})
 
     async def execute(self, route: AgentRoute, message: discord.Message) -> str:
@@ -61,7 +63,7 @@ class AgentExecutor:
             cwd=route.agent_dir,
             model=model_id,
             effort=effort,
-            max_turns=1,
+            max_turns=self.max_turns,
             permission_mode="bypassPermissions",
             setting_sources=["project"],
             env=dict(self.sdk_env),
