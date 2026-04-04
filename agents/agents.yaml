@@ -3,6 +3,8 @@ routes:
   - emoji: "📝"
     agent_id: "memo-agent"
     allowed_tools:
-      - "Bash(python3 .claude/skills/memo-write/scripts/write_channel_memo.py --event-json *)"
+      - "Read"
+      - "Bash(bash .claude/skills/memo-headings/scripts/list_markdown_headings.sh *)"
+      - "Bash(python3 .claude/skills/memo-write/scripts/write_channel_memo.py *)"
     disallowed_tools:
       - "Skill"

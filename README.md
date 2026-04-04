@@ -188,7 +188,9 @@ routes:
   - emoji: "📝"
     agent_id: "memo-agent"
     allowed_tools:
-      - "Bash(python3 .claude/skills/memo-write/scripts/write_channel_memo.py --event-json *)"
+      - "Read"
+      - "Bash(bash .claude/skills/memo-headings/scripts/list_markdown_headings.sh *)"
+      - "Bash(python3 .claude/skills/memo-write/scripts/write_channel_memo.py *)"
     disallowed_tools:
       - "Skill"
 ```
@@ -234,8 +236,9 @@ routes:
 - 觸發方式：訊息內容包含 `📝`，或對訊息加上 `📝` reaction
 - 去重規則：同一則訊息的同一個 emoji 在同一次 bot 執行期間只會成功觸發一次
 - 行為：`src/` 會把完整 Discord message context 交給 `memo-agent`
-- `memo-agent` 會執行 skill 內的預寫 script
-- 輸出會寫到 `/app/outputs/memo-agent/<channel-id>.md`
+- `memo-agent` 會先讀取目標 markdown 的 heading index，判斷要寫入哪個 `##` 主題段落
+- 如果該主題段落已存在，`memo-agent` 會保留原章節內容，並把新的作者與原始訊息整理進同一章節
+- 輸出會寫到 `/app/outputs/memo-agent/<channel-name>.md`
 
 ## 10) Outputs
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 
 import discord
@@ -193,11 +194,29 @@ class EmojiTriggerBot(discord.Client):
             )
             return
 
+        start_time = time.monotonic()
+        logger.debug(
+            "Dispatching trigger: message_id=%s emoji=%s agent_id=%s channel_id=%s source=%s",
+            message.id,
+            trigger.emoji,
+            route.agent_id,
+            message.channel.id,
+            trigger.source,
+        )
+
         try:
             result = await self.executor.execute(route, message, trigger)
         except Exception:
             await self.trigger_deduper.abort(key)
+            elapsed_seconds = time.monotonic() - start_time
             logger.exception("Failed to handle trigger for emoji %s", route.emoji)
+            logger.debug(
+                "Trigger aborted after %.1fs: message_id=%s emoji=%s agent_id=%s",
+                elapsed_seconds,
+                message.id,
+                route.emoji,
+                route.agent_id,
+            )
             return
 
         await self.trigger_deduper.complete(
@@ -208,13 +227,23 @@ class EmojiTriggerBot(discord.Client):
         )
 
         _log_execution_result(result)
+        elapsed_seconds = time.monotonic() - start_time
+        if elapsed_seconds >= 60:
+            logger.warning(
+                "Slow trigger execution: message_id=%s emoji=%s agent_id=%s duration=%.1fs",
+                message.id,
+                route.emoji,
+                route.agent_id,
+                elapsed_seconds,
+            )
 
         logger.info(
-            "Triggered task from %s emoji %s in channel %s via agent %s",
+            "Triggered task from %s emoji %s in channel %s via agent %s in %.1fs",
             trigger.source,
             route.emoji,
             message.channel.id,
             route.agent_id,
+            elapsed_seconds,
         )
 
 
