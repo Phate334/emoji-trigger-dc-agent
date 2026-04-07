@@ -1,63 +1,17 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from typing import cast
 
 import discord
 
 from .agent_manifest import AgentManifest, AgentRoute
-from .executor import AgentExecutor, ExecutionResult, TriggerContext
+from .discord_context import serialize_message
+from .executor import TriggerContext
+from .trigger_queue import TriggerQueueStore, TriggerQueueWorker
 
 logger = logging.getLogger("emoji-trigger-agent")
-
-
-@dataclass(frozen=True, slots=True)
-class TriggerKey:
-    message_id: int
-    emoji: str
-
-
-class TriggerDeduper:
-    def __init__(self) -> None:
-        self._lock = asyncio.Lock()
-        self._completed: set[TriggerKey] = set()
-        self._in_progress: set[TriggerKey] = set()
-
-    async def begin(self, key: TriggerKey) -> bool:
-        async with self._lock:
-            if key in self._completed or key in self._in_progress:
-                return False
-            self._in_progress.add(key)
-            return True
-
-    async def complete(
-        self,
-        key: TriggerKey,
-        *,
-        agent_id: str,
-        channel_id: int,
-        trigger: TriggerContext,
-    ) -> None:
-        async with self._lock:
-            self._completed.add(key)
-            self._in_progress.discard(key)
-            logger.debug(
-                "Trigger completed: %s",
-                {
-                    "message_id": key.message_id,
-                    "emoji": key.emoji,
-                    "agent_id": agent_id,
-                    "channel_id": channel_id,
-                    "trigger_source": trigger.source,
-                    "trigger_user_id": trigger.user_id,
-                },
-            )
-
-    async def abort(self, key: TriggerKey) -> None:
-        async with self._lock:
-            self._in_progress.discard(key)
 
 
 class EmojiTriggerBot(discord.Client):
@@ -65,13 +19,20 @@ class EmojiTriggerBot(discord.Client):
         self,
         intents: discord.Intents,
         manifest: AgentManifest,
-        executor: AgentExecutor,
-        trigger_deduper: TriggerDeduper,
-    ):
+        queue_store: TriggerQueueStore,
+        trigger_worker: TriggerQueueWorker,
+    ) -> None:
         super().__init__(intents=intents)
         self.manifest = manifest
-        self.executor = executor
-        self.trigger_deduper = trigger_deduper
+        self.queue_store = queue_store
+        self.trigger_worker = trigger_worker
+
+    async def setup_hook(self) -> None:
+        await self.trigger_worker.start()
+
+    async def close(self) -> None:
+        await self.trigger_worker.stop()
+        await super().close()
 
     async def on_ready(self) -> None:
         if self.user is None:
@@ -87,11 +48,7 @@ class EmojiTriggerBot(discord.Client):
         )
         logger.info("Loaded %s emoji route(s)", len(self.manifest.routes))
         for route in self.manifest.routes:
-            logger.debug(
-                "Route loaded: emoji=%s agent_id=%s",
-                route.emoji,
-                route.agent_id,
-            )
+            logger.debug("Route loaded: emoji=%s agent_id=%s", route.emoji, route.agent_id)
         logger.info("Connected guilds: %s", len(self.guilds))
         for guild in self.guilds:
             logger.info("Guild connected: %s (%s)", guild.name, guild.id)
@@ -116,10 +73,11 @@ class EmojiTriggerBot(discord.Client):
             logger.debug("No route matched message content in channel %s", message.channel.id)
             return
 
+        message_payload = serialize_message(message)
         for route in routes:
-            await self._dispatch_route(
+            await self._enqueue_route(
                 route,
-                message,
+                message_payload,
                 TriggerContext(source="message_content", emoji=route.emoji),
             )
 
@@ -154,12 +112,15 @@ class EmojiTriggerBot(discord.Client):
                 logger.warning("Missing permission to fetch channel %s", payload.channel_id)
                 return
 
-        if not hasattr(channel, "fetch_message"):
+        fetch_message = getattr(channel, "fetch_message", None)
+        if fetch_message is None:
             logger.warning("Channel %s does not support fetch_message", payload.channel_id)
             return
 
         try:
-            message = await channel.fetch_message(payload.message_id)
+            message = await cast(Callable[[int], Awaitable[discord.Message]], fetch_message)(
+                payload.message_id
+            )
         except discord.NotFound:
             logger.warning(
                 "Message %s not found in channel %s", payload.message_id, payload.channel_id
@@ -169,9 +130,9 @@ class EmojiTriggerBot(discord.Client):
             logger.warning("Missing permission to fetch message %s", payload.message_id)
             return
 
-        await self._dispatch_route(
+        await self._enqueue_route(
             route,
-            message,
+            serialize_message(message),
             TriggerContext(
                 source="reaction_add",
                 emoji=emoji_text,
@@ -179,91 +140,33 @@ class EmojiTriggerBot(discord.Client):
             ),
         )
 
-    async def _dispatch_route(
+    async def _enqueue_route(
         self,
         route: AgentRoute,
-        message: discord.Message,
+        message_payload: dict[str, object],
         trigger: TriggerContext,
     ) -> None:
-        key = TriggerKey(message_id=message.id, emoji=trigger.emoji)
-        if not await self.trigger_deduper.begin(key):
-            logger.info(
-                "Skipping duplicate trigger for message %s emoji %s",
-                message.id,
-                trigger.emoji,
-            )
-            return
-
-        start_time = time.monotonic()
-        logger.debug(
-            "Dispatching trigger: message_id=%s emoji=%s agent_id=%s channel_id=%s source=%s",
-            message.id,
-            trigger.emoji,
-            route.agent_id,
-            message.channel.id,
-            trigger.source,
-        )
-
-        try:
-            result = await self.executor.execute(route, message, trigger)
-        except Exception:
-            await self.trigger_deduper.abort(key)
-            elapsed_seconds = time.monotonic() - start_time
-            logger.exception("Failed to handle trigger for emoji %s", route.emoji)
-            logger.debug(
-                "Trigger aborted after %.1fs: message_id=%s emoji=%s agent_id=%s",
-                elapsed_seconds,
-                message.id,
-                route.emoji,
-                route.agent_id,
-            )
-            return
-
-        await self.trigger_deduper.complete(
-            key,
-            agent_id=route.agent_id,
-            channel_id=message.channel.id,
-            trigger=trigger,
-        )
-
-        _log_execution_result(result)
-        elapsed_seconds = time.monotonic() - start_time
-        if elapsed_seconds >= 60:
-            logger.warning(
-                "Slow trigger execution: message_id=%s emoji=%s agent_id=%s duration=%.1fs",
-                message.id,
-                route.emoji,
-                route.agent_id,
-                elapsed_seconds,
-            )
-
+        await self.queue_store.enqueue_trigger(route, dict(message_payload), trigger)
         logger.info(
-            "Triggered task from %s emoji %s in channel %s via agent %s in %.1fs",
+            "Queued trigger from %s emoji %s for message %s via agent %s",
             trigger.source,
             route.emoji,
-            message.channel.id,
+            message_payload["id"],
             route.agent_id,
-            elapsed_seconds,
         )
 
 
-def build_client(manifest: AgentManifest, executor: AgentExecutor) -> EmojiTriggerBot:
+def build_client(
+    manifest: AgentManifest,
+    queue_store: TriggerQueueStore,
+    trigger_worker: TriggerQueueWorker,
+) -> EmojiTriggerBot:
     intents = discord.Intents.default()
     intents.message_content = True
     intents.reactions = True
-    trigger_deduper = TriggerDeduper()
     return EmojiTriggerBot(
         intents=intents,
         manifest=manifest,
-        executor=executor,
-        trigger_deduper=trigger_deduper,
-    )
-
-
-def _log_execution_result(result: ExecutionResult) -> None:
-    if result.agent_output.strip():
-        logger.debug("Agent output suppressed from channel: %s", result.agent_output)
-    logger.debug(
-        "Verified agent output files: %s",
-        ", ".join(str(path) for path in result.changed_output_files),
+        queue_store=queue_store,
+        trigger_worker=trigger_worker,
     )

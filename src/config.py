@@ -22,6 +22,7 @@ class Settings(BaseSettings):
         claude_max_turns: Maximum Claude turns per triggered task
         agent_outputs_root: Root directory for persistent agent outputs
         anthropic_base_url: Custom base URL for Claude API (optional)
+        trigger_queue_db_path: SQLite database path for the durable trigger queue
     """
 
     # Discord Configuration
@@ -42,6 +43,14 @@ class Settings(BaseSettings):
     # Optional: Custom base URL for Claude API (for proxy or alternative endpoints)
     anthropic_base_url: str | None = None
 
+    # Trigger Queue Configuration
+    trigger_queue_db_path: str = "/app/outputs/trigger_queue.sqlite3"
+    trigger_queue_worker_concurrency: int = 1
+    trigger_queue_poll_interval_seconds: float = 1.0
+    trigger_queue_retry_count: int = 3
+    trigger_queue_retry_delay_seconds: int = 30
+    trigger_queue_claim_timeout_seconds: int = 900
+
     @field_validator("anthropic_api_key", "anthropic_auth_token")
     @classmethod
     def normalize_auth_value(cls, value: str | None) -> str | None:
@@ -50,7 +59,12 @@ class Settings(BaseSettings):
         normalized = value.strip()
         return normalized or None
 
-    @field_validator("claude_model", "anthropic_base_url", "agent_outputs_root")
+    @field_validator(
+        "claude_model",
+        "anthropic_base_url",
+        "agent_outputs_root",
+        "trigger_queue_db_path",
+    )
     @classmethod
     def normalize_optional_str(cls, value: str | None) -> str | None:
         if value is None:
@@ -58,11 +72,24 @@ class Settings(BaseSettings):
         normalized = value.strip()
         return normalized or None
 
-    @field_validator("claude_max_turns")
+    @field_validator(
+        "claude_max_turns",
+        "trigger_queue_worker_concurrency",
+        "trigger_queue_retry_count",
+        "trigger_queue_retry_delay_seconds",
+        "trigger_queue_claim_timeout_seconds",
+    )
     @classmethod
-    def validate_claude_max_turns(cls, value: int) -> int:
+    def validate_positive_ints(cls, value: int) -> int:
         if value < 1:
-            raise ValueError("CLAUDE_MAX_TURNS must be at least 1")
+            raise ValueError("Configuration value must be at least 1")
+        return value
+
+    @field_validator("trigger_queue_poll_interval_seconds")
+    @classmethod
+    def validate_poll_interval(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("TRIGGER_QUEUE_POLL_INTERVAL_SECONDS must be greater than 0")
         return value
 
     @model_validator(mode="after")
@@ -100,6 +127,10 @@ class Settings(BaseSettings):
     def get_agent_outputs_root_path(self) -> Path:
         """Get the persistent agent output root as a Path object."""
         return Path(self.agent_outputs_root)
+
+    def get_trigger_queue_db_path(self) -> Path:
+        """Get the SQLite trigger queue DB path as a Path object."""
+        return Path(self.trigger_queue_db_path)
 
     def uses_official_anthropic_api(self) -> bool:
         """Return True when the configured endpoint points at Anthropic directly."""

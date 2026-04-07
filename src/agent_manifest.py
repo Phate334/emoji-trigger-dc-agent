@@ -39,6 +39,12 @@ class AgentManifest:
                 return route
         return None
 
+    def execution_route_for_agent(self, agent_id: str) -> AgentRoute | None:
+        for route in self.routes:
+            if route.agent_id == agent_id:
+                return route
+        return None
+
 
 def load_agent_manifest(path: Path) -> AgentManifest:
     with path.open("r", encoding="utf-8") as file:
@@ -51,6 +57,7 @@ def load_agent_manifest(path: Path) -> AgentManifest:
     agents_dir = path.parent
     routes: list[AgentRoute] = []
     seen_emojis: set[str] = set()
+    agent_profiles: dict[str, AgentRoute] = {}
 
     for index, item in enumerate(raw_routes, start=1):
         if not isinstance(item, dict):
@@ -81,8 +88,16 @@ def load_agent_manifest(path: Path) -> AgentManifest:
             disallowed_tools=_read_optional_str_list(item, "disallowed_tools"),
         )
         _validate_route(route, index)
+        existing_profile = agent_profiles.get(agent_id)
+        if existing_profile is not None and not _same_execution_profile(existing_profile, route):
+            raise ValueError(
+                "Routes that share the same 'agent_id' must use the same params, model, "
+                "reasoning_effort, allowed_tools, and disallowed_tools so they can be merged "
+                "into one queued execution target"
+            )
         routes.append(route)
         seen_emojis.add(emoji)
+        agent_profiles.setdefault(agent_id, route)
 
     return AgentManifest(routes=routes)
 
@@ -137,3 +152,16 @@ def _validate_route(route: AgentRoute, index: int) -> None:
         raise ValueError(f"Route #{index} agent directory does not exist: {route.agent_dir}")
     if not route.agent_file.is_file():
         raise ValueError(f"Route #{index} agent file does not exist: {route.agent_file}")
+
+
+def _same_execution_profile(left: AgentRoute, right: AgentRoute) -> bool:
+    return (
+        left.agent_id == right.agent_id
+        and left.agent_dir == right.agent_dir
+        and left.agent_file == right.agent_file
+        and left.params == right.params
+        and left.model == right.model
+        and left.reasoning_effort == right.reasoning_effort
+        and left.allowed_tools == right.allowed_tools
+        and left.disallowed_tools == right.disallowed_tools
+    )

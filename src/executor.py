@@ -3,31 +3,35 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
-
-import discord
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from .agent_manifest import AgentRoute
 
+if TYPE_CHECKING:
+    from claude_agent_sdk import ClaudeAgentOptions as ClaudeAgentOptionsT
+else:
+    ClaudeAgentOptionsT = Any
+
+_claude_agent_sdk: Any | None
+
 try:
-    from claude_agent_sdk import (
-        AssistantMessage,
-        ClaudeAgentOptions,
-        ResultMessage,
-        TextBlock,
-        query,
-    )
+    _claude_agent_sdk = import_module("claude_agent_sdk")
 except ImportError:  # pragma: no cover - optional dependency in early rollout
-    AssistantMessage = None
-    ClaudeAgentOptions = None
-    ResultMessage = None
-    TextBlock = None
-    query = None
+    _claude_agent_sdk = None
+
+_AssistantMessageCls = getattr(_claude_agent_sdk, "AssistantMessage", None)
+_ClaudeAgentOptionsCls = getattr(_claude_agent_sdk, "ClaudeAgentOptions", None)
+_ResultMessageCls = getattr(_claude_agent_sdk, "ResultMessage", None)
+_TextBlockCls = getattr(_claude_agent_sdk, "TextBlock", None)
+_sdk_query = getattr(_claude_agent_sdk, "query", None)
 
 
-_VALID_EFFORTS = {"low", "medium", "high", "max"}
+type ReasoningEffort = Literal["low", "medium", "high", "max"]
+
+_VALID_EFFORTS = frozenset({"low", "medium", "high", "max"})
 
 logger = logging.getLogger("emoji-trigger-agent")
 
@@ -37,6 +41,27 @@ class TriggerContext:
     source: str
     emoji: str
     user_id: int | None = None
+    observed_at: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class ExecutionTrigger:
+    source: str
+    emoji: str
+    user_id: int | None = None
+    observed_at: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class ExecutionRequest:
+    route: AgentRoute
+    message_payload: dict[str, Any]
+    trigger: ExecutionTrigger
+    triggers: tuple[ExecutionTrigger, ...]
+    queue_target_id: int
+    queue_attempt_count: int
+    merged_emojis: tuple[str, ...]
+    queue_status: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -58,35 +83,20 @@ class AgentExecutor:
         self.outputs_root = Path(outputs_root)
         self.sdk_env = dict(sdk_env or {})
 
-    async def execute(
-        self,
-        route: AgentRoute,
-        message: discord.Message,
-        trigger: TriggerContext,
-    ) -> ExecutionResult:
-        return await self._run_claude_turn(route, message, trigger)
+    async def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        return await self._run_claude_turn(request)
 
-    async def _run_claude_turn(
-        self,
-        route: AgentRoute,
-        message: discord.Message,
-        trigger: TriggerContext,
-    ) -> ExecutionResult:
-        if query is None or ClaudeAgentOptions is None:
-            return ExecutionResult(
-                agent_output="Claude Agent SDK is not installed yet. Run uv sync and retry.",
-                changed_output_files=(),
-            )
+    async def _run_claude_turn(self, request: ExecutionRequest) -> ExecutionResult:
+        route = request.route
+        if _sdk_query is None or _ClaudeAgentOptionsCls is None:
+            raise RuntimeError("Claude Agent SDK is not installed yet. Run uv sync and retry.")
         if not route.agent_file.exists():
-            return ExecutionResult(
-                agent_output=f"Missing Claude agent file: {route.agent_file}",
-                changed_output_files=(),
-            )
+            raise RuntimeError(f"Missing Claude agent file: {route.agent_file}")
 
         agent_output_dir = (self.outputs_root / route.agent_id).resolve()
         agent_output_dir.mkdir(parents=True, exist_ok=True)
         before_snapshot = _snapshot_output_tree(agent_output_dir)
-        payload = self._build_payload(route, message, trigger, agent_output_dir)
+        payload = self._build_payload(request, agent_output_dir)
         runtime_context_file = _write_runtime_context_file(route.agent_dir, payload)
 
         try:
@@ -113,14 +123,17 @@ class AgentExecutor:
         self,
         route: AgentRoute,
         agent_output_dir: Path,
-    ) -> ClaudeAgentOptions:
-        effort = route.reasoning_effort if route.reasoning_effort in _VALID_EFFORTS else None
+    ) -> ClaudeAgentOptionsT:
+        effort = _normalize_effort(route.reasoning_effort)
         model_id = route.model or self.default_model_id
 
         def _stderr_callback(line: str) -> None:
             logger.error("Claude CLI stderr: %s", line)
 
-        return ClaudeAgentOptions(
+        if _ClaudeAgentOptionsCls is None:
+            raise RuntimeError("Claude Agent SDK is not installed yet. Run uv sync and retry.")
+
+        return _ClaudeAgentOptionsCls(
             cwd=route.agent_dir,
             model=model_id,
             effort=effort,
@@ -128,40 +141,51 @@ class AgentExecutor:
             permission_mode="bypassPermissions",
             setting_sources=["project"],
             add_dirs=[self.outputs_root, agent_output_dir],
-            allowed_tools=route.allowed_tools or None,
-            disallowed_tools=route.disallowed_tools or None,
+            allowed_tools=route.allowed_tools,
+            disallowed_tools=route.disallowed_tools,
             env=dict(self.sdk_env),
             extra_args={"agent": route.agent_id},
             stderr=_stderr_callback,
         )
 
-    def _build_payload(
-        self,
-        route: AgentRoute,
-        message: discord.Message,
-        trigger: TriggerContext,
-        agent_output_dir: Path,
-    ) -> dict[str, Any]:
-        return {
+    def _build_payload(self, request: ExecutionRequest, agent_output_dir: Path) -> dict[str, Any]:
+        payload = {
             "agent": {
-                "agent_id": route.agent_id,
+                "agent_id": request.route.agent_id,
                 "agent_output_dir": str(agent_output_dir),
                 "route": {
-                    "emoji": route.emoji,
-                    "params": _normalize_json_value(route.params),
-                    "model": route.model,
-                    "reasoning_effort": route.reasoning_effort,
-                    "allowed_tools": route.allowed_tools,
-                    "disallowed_tools": route.disallowed_tools,
+                    "emoji": request.route.emoji,
+                    "params": _normalize_json_value(request.route.params),
+                    "model": request.route.model,
+                    "reasoning_effort": request.route.reasoning_effort,
+                    "allowed_tools": request.route.allowed_tools,
+                    "disallowed_tools": request.route.disallowed_tools,
                 },
             },
             "trigger": {
-                "source": trigger.source,
-                "emoji": trigger.emoji,
-                "user_id": trigger.user_id,
+                "source": request.trigger.source,
+                "emoji": request.trigger.emoji,
+                "user_id": request.trigger.user_id,
+                "observed_at": request.trigger.observed_at,
             },
-            "message": _serialize_message(message),
+            "triggers": [
+                {
+                    "source": trigger.source,
+                    "emoji": trigger.emoji,
+                    "user_id": trigger.user_id,
+                    "observed_at": trigger.observed_at,
+                }
+                for trigger in request.triggers
+            ],
+            "queue": {
+                "queue_target_id": request.queue_target_id,
+                "attempt_count": request.queue_attempt_count,
+                "merged_emojis": list(request.merged_emojis),
+                "status": request.queue_status,
+            },
+            "message": _normalize_json_value(request.message_payload),
         }
+        return payload
 
     def _build_prompt(self, payload: dict[str, Any], runtime_context_file: Path) -> str:
         prompt_payload = {
@@ -180,7 +204,10 @@ class AgentExecutor:
                     "Use your configured agent definition, project skills, "
                     "and project MCP setup to decide and execute the follow-up behavior."
                 ),
-                "The application already de-duplicates triggers by message_id + emoji.",
+                (
+                    "The application now queues trigger events in SQLite and merges them "
+                    "by message_id + agent_id before execution."
+                ),
                 (
                     "The full runtime JSON context is also available on disk at "
                     "agent.runtime_context_file. Use that file as the source of truth "
@@ -197,117 +224,10 @@ class AgentExecutor:
         )
 
 
-def _serialize_message(message: discord.Message) -> dict[str, Any]:
-    return {
-        "id": message.id,
-        "content": message.content,
-        "clean_content": message.clean_content,
-        "system_content": message.system_content,
-        "jump_url": message.jump_url,
-        "created_at": _serialize_datetime(message.created_at),
-        "edited_at": _serialize_datetime(message.edited_at),
-        "pinned": message.pinned,
-        "flags": int(message.flags.value),
-        "author": {
-            "id": message.author.id,
-            "name": message.author.name,
-            "display_name": message.author.display_name,
-            "global_name": getattr(message.author, "global_name", None),
-            "bot": message.author.bot,
-        },
-        "channel": {
-            "id": message.channel.id,
-            "name": getattr(message.channel, "name", None),
-            "type": str(message.channel.type),
-        },
-        "guild": {
-            "id": message.guild.id,
-            "name": message.guild.name,
-        }
-        if message.guild is not None
-        else None,
-        "attachments": [
-            {
-                "id": attachment.id,
-                "filename": attachment.filename,
-                "content_type": attachment.content_type,
-                "size": attachment.size,
-                "url": attachment.url,
-                "proxy_url": attachment.proxy_url,
-            }
-            for attachment in message.attachments
-        ],
-        "embeds": [
-            {
-                "type": embed.type,
-                "title": embed.title,
-                "description": embed.description,
-                "url": embed.url,
-            }
-            for embed in message.embeds
-        ],
-        "mentions": [
-            {
-                "id": user.id,
-                "name": user.name,
-                "display_name": user.display_name,
-            }
-            for user in message.mentions
-        ],
-        "role_mentions": [
-            {
-                "id": role.id,
-                "name": role.name,
-            }
-            for role in message.role_mentions
-        ],
-        "channel_mentions": [
-            {
-                "id": channel.id,
-                "name": channel.name,
-                "type": str(channel.type),
-            }
-            for channel in message.channel_mentions
-        ],
-        "stickers": [
-            {
-                "id": sticker.id,
-                "name": sticker.name,
-                "format": str(sticker.format),
-            }
-            for sticker in message.stickers
-        ],
-        "reactions": [
-            {
-                "emoji": str(reaction.emoji),
-                "count": reaction.count,
-                "me": reaction.me,
-            }
-            for reaction in message.reactions
-        ],
-        "reference": _serialize_message_reference(message.reference),
-    }
-
-
-def _serialize_message_reference(
-    reference: discord.MessageReference | None,
-) -> dict[str, Any] | None:
-    if reference is None:
+def _normalize_effort(value: str | None) -> ReasoningEffort | None:
+    if value not in _VALID_EFFORTS:
         return None
-
-    resolved = getattr(reference, "resolved", None)
-    return {
-        "message_id": reference.message_id,
-        "channel_id": reference.channel_id,
-        "guild_id": reference.guild_id,
-        "jump_url": resolved.jump_url if isinstance(resolved, discord.Message) else None,
-    }
-
-
-def _serialize_datetime(value: Any) -> str | None:
-    if value is None:
-        return None
-    return value.isoformat()
+    return cast(ReasoningEffort, value)
 
 
 def _normalize_json_value(value: Any) -> Any:
@@ -363,25 +283,27 @@ def _detect_output_changes(
     return tuple(changed)
 
 
-async def _run_claude_query(prompt: str, options: ClaudeAgentOptions) -> str:
-    if query is None or AssistantMessage is None or ResultMessage is None or TextBlock is None:
-        return "Claude Agent SDK is not installed yet."
+async def _run_claude_query(prompt: str, options: ClaudeAgentOptionsT) -> str:
+    if (
+        _sdk_query is None
+        or _AssistantMessageCls is None
+        or _ResultMessageCls is None
+        or _TextBlockCls is None
+    ):
+        raise RuntimeError("Claude Agent SDK is not installed yet. Run uv sync and retry.")
 
     assistant_fragments: list[str] = []
     final_result: str | None = None
 
     try:
-        async for msg in query(prompt=prompt, options=options):
-            if isinstance(msg, AssistantMessage):
+        async for msg in _sdk_query(prompt=prompt, options=options):
+            if isinstance(msg, _AssistantMessageCls):
                 for block in msg.content:
-                    if isinstance(block, TextBlock) and block.text.strip():
+                    if isinstance(block, _TextBlockCls) and block.text.strip():
                         assistant_fragments.append(block.text.strip())
-            elif (
-                isinstance(msg, ResultMessage)
-                and isinstance(msg.result, str)
-                and msg.result.strip()
-            ):
-                final_result = msg.result.strip()
+            elif isinstance(msg, _ResultMessageCls) and isinstance(msg.result, str):
+                if msg.result.strip():
+                    final_result = msg.result.strip()
     except Exception:
         if final_result or assistant_fragments:
             logger.warning(

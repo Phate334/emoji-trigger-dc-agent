@@ -3,15 +3,8 @@ import logging
 from .config import Settings
 
 
-def setup_logging(settings: Settings | None = None) -> None:
-    """Configure logging for the application.
-
-    Args:
-        settings: Settings instance. If None, creates a new instance.
-    """
-    if settings is None:
-        settings = Settings()
-
+def setup_logging(settings: Settings) -> None:
+    """Configure logging for the application."""
     log_level_name = settings.log_level.upper()
     discord_log_level_name = settings.get_discord_log_level().upper()
 

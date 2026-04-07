@@ -33,8 +33,9 @@
 
 ## Runtime Expectations
 
-- `src/bot.py` decides when a trigger is eligible to run and enforces one successful execution per `message_id + emoji` within the current bot process.
-- `src/executor.py` passes the full Discord message context to the selected agent and verifies that the agent actually changed files under its output directory before the run is treated as successful.
+- `src/bot.py` decides when a trigger is eligible to be enqueued and writes trigger intake into the SQLite queue.
+- `src/trigger_queue.py` merges work by `message_id + agent_id`, runs background workers, and manages `pending`, `processing`, `error`, and `finished` target states.
+- `src/executor.py` passes the queued Discord message context to the selected agent and verifies that the agent actually changed files under its output directory before the run is treated as successful.
 - A completed trigger should leave a durable file change under `outputs/<agent-id>/`.
-- A completed trigger should emit a debug log record describing the successful `message_id + emoji` processing result.
-- Trigger de-duplication is in-memory only; restarting the bot clears the completed-trigger set.
+- A completed trigger target should emit a log record describing the successful queued processing result.
+- Queue state is durable in `/app/outputs/trigger_queue.sqlite3`; restarting the bot should recover expired in-flight claims back to `pending`.
