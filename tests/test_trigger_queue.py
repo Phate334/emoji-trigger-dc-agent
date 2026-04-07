@@ -4,6 +4,8 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 from src.agent_manifest import AgentRoute
@@ -75,10 +77,12 @@ class TriggerQueueStoreTests(unittest.IsolatedAsyncioTestCase):
         self.memo_pin_route = _make_route(self.base_dir, "memo-agent", "📌")
         self.todo_route = _make_route(self.base_dir, "todo-agent", "✅")
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.store.db_path)
         connection.row_factory = sqlite3.Row
-        return connection
+        with closing(connection) as conn:
+            yield conn
 
     async def test_same_message_creates_one_message_row_and_two_targets(self) -> None:
         await self.store.enqueue_trigger(

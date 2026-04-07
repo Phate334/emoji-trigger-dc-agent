@@ -5,6 +5,8 @@ import json
 import logging
 import sqlite3
 import uuid
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -106,6 +108,78 @@ class QueuedExecutionItem:
     trigger_events: tuple[QueueTriggerEvent, ...]
 
 
+@dataclass(slots=True)
+class QueueTargetState:
+    target_id: int
+    status: str
+    pending_emojis: set[str]
+    processing_emojis: set[str]
+    last_finished_emojis: set[str]
+    attempt_count: int
+    next_attempt_at: str
+    claim_token: str | None
+    claim_expires_at: str | None
+    last_error: str | None
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> QueueTargetState:
+        return cls(
+            target_id=int(row["id"]),
+            status=str(row["status"]),
+            pending_emojis=_load_emojis(row["pending_emojis_json"]),
+            processing_emojis=_load_emojis(row["processing_emojis_json"]),
+            last_finished_emojis=_load_emojis(row["last_finished_emojis_json"]),
+            attempt_count=int(row["attempt_count"]),
+            next_attempt_at=str(row["next_attempt_at"]),
+            claim_token=str(row["claim_token"]) if row["claim_token"] is not None else None,
+            claim_expires_at=(
+                str(row["claim_expires_at"]) if row["claim_expires_at"] is not None else None
+            ),
+            last_error=str(row["last_error"]) if row["last_error"] is not None else None,
+        )
+
+    def has_seen(self, emoji: str) -> bool:
+        return (
+            emoji in self.pending_emojis
+            or emoji in self.processing_emojis
+            or emoji in self.last_finished_emojis
+        )
+
+    def reopen_for_trigger(self, emoji: str, now: str) -> None:
+        self.pending_emojis.add(emoji)
+        self.status = "pending"
+        self.attempt_count = 0
+        self.next_attempt_at = now
+        self.last_error = None
+
+    def register_trigger(self, emoji: str, now: str) -> str | None:
+        if self.status == "finished":
+            if emoji in self.last_finished_emojis:
+                return now
+            self.reopen_for_trigger(emoji, now)
+            return None
+
+        if self.status == "processing":
+            if emoji in self.processing_emojis or emoji in self.last_finished_emojis:
+                return now
+            self.pending_emojis.add(emoji)
+            return None
+
+        if self.status == "pending":
+            if emoji in self.last_finished_emojis and emoji not in self.pending_emojis:
+                return now
+            self.pending_emojis.add(emoji)
+            return None
+
+        if self.status == "error":
+            if self.has_seen(emoji):
+                return now
+            self.reopen_for_trigger(emoji, now)
+            return None
+
+        raise ValueError(f"Unsupported queue target status: {self.status}")
+
+
 class TriggerQueueStore:
     def __init__(self, db_path: Path | str) -> None:
         self.db_path = Path(db_path)
@@ -148,13 +222,15 @@ class TriggerQueueStore:
     async def recover_expired_claims(self) -> int:
         return await asyncio.to_thread(self._recover_expired_claims_sync)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.db_path, timeout=30.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA busy_timeout = 30000")
-        return connection
+        with closing(connection) as conn:
+            yield conn
 
     def _enqueue_trigger_sync(
         self,
@@ -202,7 +278,7 @@ class TriggerQueueStore:
                     (
                         message_id,
                         route.agent_id,
-                        _dump_json([route.emoji]),
+                        _dump_json([trigger.emoji]),
                         now,
                         now,
                         now,
@@ -210,49 +286,9 @@ class TriggerQueueStore:
                 )
                 target_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
             else:
-                target_id = int(row["id"])
-                pending_emojis = _load_emojis(row["pending_emojis_json"])
-                processing_emojis = _load_emojis(row["processing_emojis_json"])
-                last_finished_emojis = _load_emojis(row["last_finished_emojis_json"])
-                status = str(row["status"])
-                attempt_count = int(row["attempt_count"])
-                next_attempt_at = str(row["next_attempt_at"])
-                claim_token = row["claim_token"]
-                claim_expires_at = row["claim_expires_at"]
-                last_error = row["last_error"]
-
-                if status == "finished":
-                    if route.emoji in last_finished_emojis:
-                        event_processed_at = now
-                    else:
-                        pending_emojis.add(route.emoji)
-                        status = "pending"
-                        attempt_count = 0
-                        next_attempt_at = now
-                        last_error = None
-                elif status == "processing":
-                    if route.emoji in processing_emojis or route.emoji in last_finished_emojis:
-                        event_processed_at = now
-                    elif route.emoji not in pending_emojis:
-                        pending_emojis.add(route.emoji)
-                elif status == "pending":
-                    if route.emoji in last_finished_emojis and route.emoji not in pending_emojis:
-                        event_processed_at = now
-                    else:
-                        pending_emojis.add(route.emoji)
-                elif status == "error":
-                    if (
-                        route.emoji in pending_emojis
-                        or route.emoji in processing_emojis
-                        or route.emoji in last_finished_emojis
-                    ):
-                        event_processed_at = now
-                    else:
-                        pending_emojis.add(route.emoji)
-                        status = "pending"
-                        attempt_count = 0
-                        next_attempt_at = now
-                        last_error = None
+                state = QueueTargetState.from_row(row)
+                target_id = state.target_id
+                event_processed_at = state.register_trigger(trigger.emoji, now)
 
                 conn.execute(
                     """
@@ -270,15 +306,15 @@ class TriggerQueueStore:
                     WHERE id = ?
                     """,
                     (
-                        status,
-                        _dump_json(pending_emojis),
-                        _dump_json(processing_emojis),
-                        _dump_json(last_finished_emojis),
-                        attempt_count,
-                        next_attempt_at,
-                        claim_token,
-                        claim_expires_at,
-                        last_error,
+                        state.status,
+                        _dump_json(state.pending_emojis),
+                        _dump_json(state.processing_emojis),
+                        _dump_json(state.last_finished_emojis),
+                        state.attempt_count,
+                        state.next_attempt_at,
+                        state.claim_token,
+                        state.claim_expires_at,
+                        state.last_error,
                         now,
                         target_id,
                     ),
