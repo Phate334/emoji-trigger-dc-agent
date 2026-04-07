@@ -22,12 +22,12 @@ class Settings(BaseSettings):
         claude_max_turns: Maximum Claude turns per triggered task
         agent_outputs_root: Root directory for persistent agent outputs
         anthropic_base_url: Custom base URL for Claude API (optional)
-        trigger_queue_db_path: SQLite database path for the durable trigger queue
+        trigger_queue_db_path: Optional SQLite database path override for the durable trigger queue
     """
 
     # Discord Configuration
     discord_bot_token: str
-    emoji_agent_manifest: str = "agents/agents.yaml"
+    emoji_agent_manifest: Path = Path("agents/agents.yaml")
 
     # Logging Configuration
     log_level: str = "INFO"
@@ -38,37 +38,36 @@ class Settings(BaseSettings):
     anthropic_auth_token: str | None = None
     claude_model: str | None = None
     claude_max_turns: int = 4
-    agent_outputs_root: str = "/app/outputs"
+    agent_outputs_root: Path = Path("/app/outputs")
 
     # Optional: Custom base URL for Claude API (for proxy or alternative endpoints)
     anthropic_base_url: str | None = None
 
     # Trigger Queue Configuration
-    trigger_queue_db_path: str = "/app/outputs/trigger_queue.sqlite3"
+    trigger_queue_db_path: Path | None = None
     trigger_queue_worker_concurrency: int = 1
     trigger_queue_poll_interval_seconds: float = 1.0
     trigger_queue_retry_count: int = 3
     trigger_queue_retry_delay_seconds: int = 30
     trigger_queue_claim_timeout_seconds: int = 900
 
-    @field_validator("anthropic_api_key", "anthropic_auth_token")
-    @classmethod
-    def normalize_auth_value(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        return normalized or None
-
     @field_validator(
+        "discord_bot_token",
+        "emoji_agent_manifest",
+        "log_level",
+        "discord_log_level",
+        "anthropic_api_key",
+        "anthropic_auth_token",
         "claude_model",
-        "anthropic_base_url",
         "agent_outputs_root",
+        "anthropic_base_url",
         "trigger_queue_db_path",
+        mode="before",
     )
     @classmethod
-    def normalize_optional_str(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
+    def normalize_string_inputs(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
         normalized = value.strip()
         return normalized or None
 
@@ -116,21 +115,17 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    def get_discord_log_level(self) -> str:
+    @property
+    def discord_log_level_name(self) -> str:
         """Get Discord log level, falling back to log_level if not set."""
         return self.discord_log_level or self.log_level
 
-    def get_emoji_agent_manifest_path(self) -> Path:
-        """Get emoji agent manifest as a Path object."""
-        return Path(self.emoji_agent_manifest)
-
-    def get_agent_outputs_root_path(self) -> Path:
-        """Get the persistent agent output root as a Path object."""
-        return Path(self.agent_outputs_root)
-
-    def get_trigger_queue_db_path(self) -> Path:
+    @property
+    def resolved_trigger_queue_db_path(self) -> Path:
         """Get the SQLite trigger queue DB path as a Path object."""
-        return Path(self.trigger_queue_db_path)
+        if self.trigger_queue_db_path is not None:
+            return self.trigger_queue_db_path
+        return self.agent_outputs_root / "trigger_queue.sqlite3"
 
     def uses_official_anthropic_api(self) -> bool:
         """Return True when the configured endpoint points at Anthropic directly."""
@@ -143,7 +138,8 @@ class Settings(BaseSettings):
 
         return urlparse(candidate).hostname == "api.anthropic.com"
 
-    def build_claude_sdk_env(self) -> dict[str, str]:
+    @property
+    def claude_sdk_env(self) -> dict[str, str]:
         """Build the env passed to the Claude CLI subprocess."""
         env: dict[str, str] = {}
         if self.anthropic_api_key is not None:

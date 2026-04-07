@@ -38,9 +38,7 @@ RUN mkdir -p /app/outputs && \
     chmod 777 /app/outputs
 
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1 \
-    EMOJI_AGENT_MANIFEST=/app/agents/agents.yaml \
-    AGENT_OUTPUTS_ROOT=/app/outputs
+    PYTHONUNBUFFERED=1
 
 USER nonroot
 

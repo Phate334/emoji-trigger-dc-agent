@@ -19,19 +19,19 @@ def run() -> None:
     logger.info("Starting emoji trigger agent")
     logger.debug("Using manifest: %s", settings.emoji_agent_manifest)
 
-    outputs_root = settings.get_agent_outputs_root_path()
+    outputs_root = settings.agent_outputs_root
     _ensure_writable_directory(outputs_root)
-    trigger_queue_db_path = settings.get_trigger_queue_db_path()
+    trigger_queue_db_path = settings.resolved_trigger_queue_db_path
     trigger_queue_db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    manifest = load_agent_manifest(settings.get_emoji_agent_manifest_path())
+    manifest = load_agent_manifest(settings.emoji_agent_manifest)
     queue_store = TriggerQueueStore(trigger_queue_db_path)
     queue_store.initialize()
     executor = AgentExecutor(
         default_model_id=settings.claude_model,
         max_turns=settings.claude_max_turns,
         outputs_root=outputs_root,
-        sdk_env=settings.build_claude_sdk_env(),
+        sdk_env=settings.claude_sdk_env,
     )
     trigger_worker = TriggerQueueWorker(
         store=queue_store,

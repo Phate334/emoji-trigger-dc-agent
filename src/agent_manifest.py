@@ -27,12 +27,6 @@ class AgentManifest:
     def routes_for_message(self, content: str) -> list[AgentRoute]:
         return [route for route in self.routes if route.emoji in content]
 
-    def route_for_message(self, content: str) -> AgentRoute | None:
-        routes = self.routes_for_message(content)
-        if routes:
-            return routes[0]
-        return None
-
     def route_for_reaction(self, emoji_text: str) -> AgentRoute | None:
         for route in self.routes:
             if route.emoji == emoji_text:
