@@ -820,8 +820,7 @@ def _route_snapshot(route: AgentRoute) -> dict[str, Any]:
         "params": route.params,
         "model": route.model,
         "reasoning_effort": route.reasoning_effort,
-        "allowed_tools": route.allowed_tools,
-        "disallowed_tools": route.disallowed_tools,
+        "message_fields": route.message_fields,
     }
 
 
@@ -834,8 +833,7 @@ def _runtime_route(route: AgentRoute, emoji: str) -> AgentRoute:
         params=dict(route.params),
         model=route.model,
         reasoning_effort=route.reasoning_effort,
-        allowed_tools=list(route.allowed_tools),
-        disallowed_tools=list(route.disallowed_tools),
+        message_fields=list(route.message_fields) if route.message_fields is not None else None,
     )
 
 

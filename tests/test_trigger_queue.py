@@ -23,7 +23,6 @@ def _make_route(base_dir: Path, agent_id: str, emoji: str) -> AgentRoute:
         agent_id=agent_id,
         agent_dir=agent_dir,
         agent_file=agent_file,
-        allowed_tools=["Read"],
     )
 
 
@@ -142,6 +141,29 @@ class TriggerQueueStoreTests(unittest.IsolatedAsyncioTestCase):
         assert item is not None
         self.assertEqual(item.merged_emojis, ("📌", "📝"))
         self.assertEqual([event.emoji for event in item.trigger_events], ["📝", "📌"])
+
+    async def test_route_snapshot_tracks_message_fields_without_tool_policy(self) -> None:
+        route = AgentRoute(
+            emoji="📝",
+            agent_id="memo-agent",
+            agent_dir=self.memo_route.agent_dir,
+            agent_file=self.memo_route.agent_file,
+            message_fields=["content", "author"],
+        )
+
+        await self.store.enqueue_trigger(
+            route,
+            self.message,
+            TriggerContext(source="message_content", emoji="📝"),
+        )
+
+        with self._connect() as conn:
+            row = conn.execute("SELECT route_snapshot_json FROM queue_events").fetchone()
+
+        route_snapshot = json.loads(row["route_snapshot_json"])
+        self.assertEqual(route_snapshot["message_fields"], ["content", "author"])
+        self.assertNotIn("allowed_tools", route_snapshot)
+        self.assertNotIn("disallowed_tools", route_snapshot)
 
     async def test_new_emoji_while_processing_waits_for_next_round(self) -> None:
         await self.store.enqueue_trigger(

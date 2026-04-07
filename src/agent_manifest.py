@@ -6,6 +6,11 @@ from typing import Any
 
 import yaml
 
+from .discord_context import SERIALIZED_MESSAGE_FIELD_NAMES
+
+_REMOVED_ROUTE_KEYS = ("allowed_tools", "disallowed_tools")
+_VALID_MESSAGE_FIELDS = frozenset(SERIALIZED_MESSAGE_FIELD_NAMES)
+
 
 @dataclass(slots=True)
 class AgentRoute:
@@ -16,8 +21,7 @@ class AgentRoute:
     params: dict[str, Any] = field(default_factory=dict)
     model: str | None = None
     reasoning_effort: str | None = None
-    allowed_tools: list[str] = field(default_factory=list)
-    disallowed_tools: list[str] = field(default_factory=list)
+    message_fields: list[str] | None = None
 
 
 @dataclass(slots=True)
@@ -59,6 +63,7 @@ def load_agent_manifest(path: Path) -> AgentManifest:
 
         emoji = item.get("emoji")
         agent_id = item.get("agent_id")
+        _reject_removed_route_keys(item)
 
         if not isinstance(emoji, str) or not emoji:
             raise ValueError(f"Route #{index} is missing 'emoji'")
@@ -78,15 +83,14 @@ def load_agent_manifest(path: Path) -> AgentManifest:
             params=_read_params(item),
             model=_read_optional_str(item, "model"),
             reasoning_effort=_read_reasoning_effort(item),
-            allowed_tools=_read_optional_str_list(item, "allowed_tools"),
-            disallowed_tools=_read_optional_str_list(item, "disallowed_tools"),
+            message_fields=_read_message_fields(item),
         )
         _validate_route(route, index)
         existing_profile = agent_profiles.get(agent_id)
         if existing_profile is not None and not _same_execution_profile(existing_profile, route):
             raise ValueError(
                 "Routes that share the same 'agent_id' must use the same params, model, "
-                "reasoning_effort, allowed_tools, and disallowed_tools so they can be merged "
+                "reasoning_effort, and message_fields so they can be merged "
                 "into one queued execution target"
             )
         routes.append(route)
@@ -115,18 +119,24 @@ def _read_reasoning_effort(data: dict[str, object]) -> str | None:
     return effort
 
 
-def _read_optional_str_list(data: dict[str, object], key: str) -> list[str]:
-    value = data.get(key)
+def _read_message_fields(data: dict[str, object]) -> list[str] | None:
+    value = data.get("message_fields")
     if value is None:
-        return []
-    if not isinstance(value, list):
-        raise ValueError(f"Field '{key}' must be a list of non-empty strings when provided")
+        return None
+    if not isinstance(value, list) or not value:
+        raise ValueError("Field 'message_fields' must be a non-empty list of strings")
 
     items: list[str] = []
+    seen: set[str] = set()
     for item in value:
         if not isinstance(item, str) or not item:
-            raise ValueError(f"Field '{key}' must contain only non-empty strings")
+            raise ValueError("Field 'message_fields' must contain only non-empty strings")
+        if item in seen:
+            raise ValueError("Field 'message_fields' must not contain duplicate entries")
+        if item not in _VALID_MESSAGE_FIELDS:
+            raise ValueError(f"Field 'message_fields' contains unsupported message field: {item}")
         items.append(item)
+        seen.add(item)
     return items
 
 
@@ -148,6 +158,14 @@ def _validate_route(route: AgentRoute, index: int) -> None:
         raise ValueError(f"Route #{index} agent file does not exist: {route.agent_file}")
 
 
+def _reject_removed_route_keys(data: dict[str, object]) -> None:
+    for key in _REMOVED_ROUTE_KEYS:
+        if key in data:
+            raise ValueError(
+                f"Field '{key}' is no longer supported; tool policy now uses the runtime default"
+            )
+
+
 def _same_execution_profile(left: AgentRoute, right: AgentRoute) -> bool:
     return (
         left.agent_id == right.agent_id
@@ -156,6 +174,5 @@ def _same_execution_profile(left: AgentRoute, right: AgentRoute) -> bool:
         and left.params == right.params
         and left.model == right.model
         and left.reasoning_effort == right.reasoning_effort
-        and left.allowed_tools == right.allowed_tools
-        and left.disallowed_tools == right.disallowed_tools
+        and left.message_fields == right.message_fields
     )

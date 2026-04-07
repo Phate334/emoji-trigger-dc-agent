@@ -9,6 +9,7 @@ from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from .agent_manifest import AgentRoute
+from .discord_context import filter_message_fields
 
 if TYPE_CHECKING:
     from claude_agent_sdk import ClaudeAgentOptions as ClaudeAgentOptionsT
@@ -141,8 +142,6 @@ class AgentExecutor:
             permission_mode="bypassPermissions",
             setting_sources=["project"],
             add_dirs=[self.outputs_root, agent_output_dir],
-            allowed_tools=route.allowed_tools,
-            disallowed_tools=route.disallowed_tools,
             env=dict(self.sdk_env),
             extra_args={"agent": route.agent_id},
             stderr=_stderr_callback,
@@ -158,8 +157,7 @@ class AgentExecutor:
                     "params": _normalize_json_value(request.route.params),
                     "model": request.route.model,
                     "reasoning_effort": request.route.reasoning_effort,
-                    "allowed_tools": request.route.allowed_tools,
-                    "disallowed_tools": request.route.disallowed_tools,
+                    "message_fields": request.route.message_fields,
                 },
             },
             "trigger": {
@@ -183,7 +181,9 @@ class AgentExecutor:
                 "merged_emojis": list(request.merged_emojis),
                 "status": request.queue_status,
             },
-            "message": _normalize_json_value(request.message_payload),
+            "message": _normalize_json_value(
+                filter_message_fields(request.message_payload, request.route.message_fields)
+            ),
         }
         return payload
 

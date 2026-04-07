@@ -210,12 +210,14 @@ version: 1
 routes:
   - emoji: "📝"
     agent_id: "memo-agent"
-    allowed_tools:
-      - "Read"
-      - "Bash(bash .claude/skills/memo-headings/scripts/list_markdown_headings.sh *)"
-      - "Bash(python3 .claude/skills/memo-write/scripts/write_channel_memo.py *)"
-    disallowed_tools:
-      - "Skill"
+    message_fields:
+      - "content"
+      - "author"
+      - "channel"
+      - "guild"
+      - "jump_url"
+      - "attachments"
+      - "reference"
 ```
 
 支援的欄位由 `src/agent_manifest.py` 解析，包含：
@@ -225,16 +227,19 @@ routes:
 - `params`
 - `model`
 - `reasoning_effort`
-- `allowed_tools`
-- `disallowed_tools`
+- `message_fields`
+
+Discord message 可選欄位與完整 schema 請參考 [docs/discord-message-fields.md](/home/phate/emoji-trigger-agent/docs/discord-message-fields.md)。
 
 原則：
 
 - route 要保持 declarative
 - 不要把 emoji routing 寫死在 `src/`
-- 若某個 agent 需要限制 Claude 可用工具，放在 manifest，而不是寫死在 app code
-- 若多個 emoji 指向同一個 `agent_id`，它們的 `params`、`model`、`reasoning_effort`、`allowed_tools`、`disallowed_tools` 必須一致，因為 queue 會把它們合併成同一個 execution target
-- 對有 side effect 的 agent，優先把 `allowed_tools` 收斂到預寫 script 的固定 Bash 前綴，必要時連固定旗標一起限制
+- `message_fields` 是可選的；未設定時，agent 會收到完整 `message`
+- `message_fields` 只接受 Discord message snapshot 的第一層欄位；如果選 `author`，會傳整個 `author` 物件
+- queue 仍會保存完整 Discord message snapshot；`message_fields` 只影響交給 agent 的 runtime payload
+- 若多個 emoji 指向同一個 `agent_id`，它們的 `params`、`model`、`reasoning_effort`、`message_fields` 必須一致，因為 queue 會把它們合併成同一個 execution target
+- Claude 可用工具不再由 route manifest 配置，runtime 一律使用 SDK 預設工具策略
 
 ## 8) 建立新的 Agent
 
@@ -304,4 +309,5 @@ docker compose logs -f bot
 ## 12) 補充文件
 
 - [AGENTS.md](/home/phate/emoji-trigger-agent/AGENTS.md): 專案協作與目錄邊界
+- [docs/discord-message-fields.md](/home/phate/emoji-trigger-agent/docs/discord-message-fields.md): Discord message runtime payload 欄位清單
 - [docs/discord-setup.md](/home/phate/emoji-trigger-agent/docs/discord-setup.md): Discord Bot 建立流程

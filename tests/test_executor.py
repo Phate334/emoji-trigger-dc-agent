@@ -21,7 +21,6 @@ def _make_route(base_dir: Path, agent_id: str, emoji: str) -> AgentRoute:
         agent_dir=agent_dir,
         agent_file=agent_file,
         params={"kind": "test"},
-        allowed_tools=["Read"],
     )
 
 
@@ -106,6 +105,66 @@ class AgentExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["queue"]["merged_emojis"], ["📌", "📝"])
         self.assertEqual(payload["trigger"]["emoji"], "📝")
         self.assertEqual([trigger["emoji"] for trigger in payload["triggers"]], ["📝", "📌"])
+        self.assertIsNone(payload["agent"]["route"]["message_fields"])
+        self.assertEqual(payload["message"]["content"], "hello world")
+
+    async def test_build_payload_filters_message_fields_when_route_requests_subset(self) -> None:
+        filtered_route = AgentRoute(
+            emoji=self.route.emoji,
+            agent_id=self.route.agent_id,
+            agent_dir=self.route.agent_dir,
+            agent_file=self.route.agent_file,
+            params=dict(self.route.params),
+            message_fields=["content", "author", "attachments"],
+        )
+        request = ExecutionRequest(
+            route=filtered_route,
+            message_payload=_message_payload(),
+            trigger=self.request.trigger,
+            triggers=self.request.triggers,
+            queue_target_id=self.request.queue_target_id,
+            queue_attempt_count=self.request.queue_attempt_count,
+            merged_emojis=self.request.merged_emojis,
+            queue_status=self.request.queue_status,
+        )
+
+        payload = self.executor._build_payload(
+            request,
+            self.base_dir / "outputs" / "memo-agent",
+        )
+
+        self.assertEqual(
+            payload["message"],
+            {
+                "content": "hello world",
+                "author": _message_payload()["author"],
+                "attachments": [],
+            },
+        )
+        self.assertEqual(
+            payload["agent"]["route"]["message_fields"],
+            ["content", "author", "attachments"],
+        )
+
+    async def test_build_claude_options_uses_sdk_default_tool_policy(self) -> None:
+        captured_kwargs: dict[str, object] = {}
+
+        def _fake_options(**kwargs: object) -> dict[str, object]:
+            captured_kwargs.update(kwargs)
+            return dict(kwargs)
+
+        with (
+            patch("src.executor._sdk_query", object()),
+            patch("src.executor._ClaudeAgentOptionsCls", _fake_options),
+        ):
+            options = self.executor._build_claude_options(
+                self.route,
+                self.base_dir / "outputs" / "memo-agent",
+            )
+
+        self.assertEqual(options["cwd"], self.route.agent_dir)
+        self.assertNotIn("allowed_tools", captured_kwargs)
+        self.assertNotIn("disallowed_tools", captured_kwargs)
 
     async def test_execute_raises_when_agent_makes_no_output_changes(self) -> None:
         dummy_options = SimpleNamespace()

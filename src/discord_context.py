@@ -1,8 +1,32 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import discord
+
+SERIALIZED_MESSAGE_FIELD_NAMES: tuple[str, ...] = (
+    "id",
+    "content",
+    "clean_content",
+    "system_content",
+    "jump_url",
+    "created_at",
+    "edited_at",
+    "pinned",
+    "flags",
+    "author",
+    "channel",
+    "guild",
+    "attachments",
+    "embeds",
+    "mentions",
+    "role_mentions",
+    "channel_mentions",
+    "stickers",
+    "reactions",
+    "reference",
+)
 
 
 def serialize_message(message: discord.Message) -> dict[str, Any]:
@@ -95,6 +119,16 @@ def serialize_message(message: discord.Message) -> dict[str, Any]:
         ],
         "reference": _serialize_message_reference(message.reference),
     }
+
+
+def filter_message_fields(
+    message_payload: Mapping[str, Any],
+    message_fields: Sequence[str] | None,
+) -> dict[str, Any]:
+    if message_fields is None:
+        return dict(message_payload)
+
+    return {field: message_payload.get(field) for field in message_fields}
 
 
 def _serialize_message_reference(
