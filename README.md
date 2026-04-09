@@ -58,92 +58,106 @@ uv sync
 
 專案已包含 `claude-agent-sdk` 依賴；Claude Code CLI 由套件內建，不需要另外安裝系統 CLI。
 
-## 3) 設定環境變數
+## 3) Environment Variables
 
-至少提供一種 Claude 驗證方式：
+`src.config.Settings` loads values from the process environment and from `.env` automatically.
+For a complete template, start from [`example.env`](example.env).
 
-- `ANTHROPIC_API_KEY`
-- `ANTHROPIC_AUTH_TOKEN`
+Minimum required configuration:
 
-直連 Anthropic：
+- `DISCORD_BOT_TOKEN`
+- one of `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`
+
+Available variables:
+
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `DISCORD_BOT_TOKEN` | Yes | none | Discord bot token from the Developer Portal. |
+| `EMOJI_AGENT_MANIFEST` | No | `agents/agents.yaml` | Path to the runtime emoji routing manifest. |
+| `ANTHROPIC_API_KEY` | Conditional | none | Standard Claude SDK API key. Use a real key for the official Anthropic API. Placeholder values such as `sk-temp` are only accepted when `ANTHROPIC_BASE_URL` points to a non-official endpoint. |
+| `ANTHROPIC_AUTH_TOKEN` | Conditional | none | Bearer token for proxies or gateways that expect `Authorization: Bearer ...`. |
+| `ANTHROPIC_BASE_URL` | No | official Anthropic endpoint | Optional custom Claude-compatible endpoint. Leave unset when talking directly to Anthropic. |
+| `CLAUDE_MODEL` | No | SDK default | Default model for all routes. A route-level `model` in `agents/agents.yaml` still takes precedence. |
+| `CLAUDE_MAX_TURNS` | No | `4` | Maximum Claude turns per queued execution. Must be at least `1`. |
+| `AGENT_OUTPUTS_ROOT` | No | `/app/outputs` | Root directory for durable agent outputs. |
+| `TRIGGER_QUEUE_DB_PATH` | No | `<AGENT_OUTPUTS_ROOT>/trigger_queue.sqlite3` | Optional explicit SQLite queue path. If unset, the app derives it from `AGENT_OUTPUTS_ROOT`. |
+| `TRIGGER_QUEUE_WORKER_CONCURRENCY` | No | `1` | Number of background queue workers. Must be at least `1`. |
+| `TRIGGER_QUEUE_POLL_INTERVAL_SECONDS` | No | `1.0` | Queue polling interval in seconds. Must be greater than `0`. |
+| `TRIGGER_QUEUE_RETRY_COUNT` | No | `3` | Retry count after the first failed execution. Must be at least `1`. |
+| `TRIGGER_QUEUE_RETRY_DELAY_SECONDS` | No | `30` | Delay between retries in seconds. Must be at least `1`. |
+| `TRIGGER_QUEUE_CLAIM_TIMEOUT_SECONDS` | No | `900` | Lease timeout for recovering stuck `processing` jobs. Must be at least `1`. |
+| `LOG_LEVEL` | No | `INFO` | Application log level. |
+| `DISCORD_LOG_LEVEL` | No | same as `LOG_LEVEL` | Separate log level for the `discord.py` logger. |
+
+Common setups:
+
+Direct Anthropic API:
 
 ```bash
-export DISCORD_BOT_TOKEN="你的 token"
-export ANTHROPIC_API_KEY="你的 anthropic key"
+export DISCORD_BOT_TOKEN="your-discord-token"
+export ANTHROPIC_API_KEY="your-real-anthropic-key"
 ```
 
-走 bearer token 的 proxy / gateway：
+Bearer-auth proxy or gateway:
 
 ```bash
-export DISCORD_BOT_TOKEN="你的 token"
-export ANTHROPIC_AUTH_TOKEN="你的 gateway bearer token"
+export DISCORD_BOT_TOKEN="your-discord-token"
+export ANTHROPIC_AUTH_TOKEN="your-gateway-bearer-token"
 export ANTHROPIC_BASE_URL="https://your-gateway.example.com"
 ```
 
-走本機相容 endpoint：
+Local or self-hosted compatible endpoint:
 
 ```bash
+export DISCORD_BOT_TOKEN="your-discord-token"
 export ANTHROPIC_API_KEY="sk-temp"
 export ANTHROPIC_BASE_URL="http://localhost:8080"
 ```
 
-可選設定：
+## 4) Run
 
-```bash
-export CLAUDE_MODEL="claude-sonnet-4-5"
-export CLAUDE_MAX_TURNS="4"
-export AGENT_OUTPUTS_ROOT="/app/outputs"
-export TRIGGER_QUEUE_DB_PATH="/app/outputs/trigger_queue.sqlite3"
-export TRIGGER_QUEUE_WORKER_CONCURRENCY="1"
-export TRIGGER_QUEUE_POLL_INTERVAL_SECONDS="1"
-export TRIGGER_QUEUE_RETRY_COUNT="3"
-export TRIGGER_QUEUE_RETRY_DELAY_SECONDS="30"
-export TRIGGER_QUEUE_CLAIM_TIMEOUT_SECONDS="900"
-export EMOJI_AGENT_MANIFEST="agents/agents.yaml"
-```
-
-## 4) 啟動
-
-### 本機啟動
+### Run locally
 
 ```bash
 uv run python -m src.app
 ```
 
-### Docker / Compose 啟動
+### Run with Docker Compose
 
-先準備 `.env`：
+Prepare `.env` first:
 
 ```ini
-DISCORD_BOT_TOKEN=你的 token
+DISCORD_BOT_TOKEN=your-discord-token
 ANTHROPIC_API_KEY=sk-temp
 ANTHROPIC_BASE_URL=http://llm:8080
-CLAUDE_MODEL=gemma-4-26b-a4b
+CLAUDE_MODEL=gemma-4-e4b
 CLAUDE_MAX_TURNS=4
 AGENT_OUTPUTS_ROOT=/app/outputs
-TRIGGER_QUEUE_DB_PATH=/app/outputs/trigger_queue.sqlite3
+LOG_LEVEL=INFO
 ```
 
-建置映像：
+`TRIGGER_QUEUE_DB_PATH` usually does not need to be set explicitly because the app derives it as `/app/outputs/trigger_queue.sqlite3`.
+
+Build the image:
 
 ```bash
 docker build -f Dockerfile -t emoji-trigger-agent:latest .
 ```
 
-首次啟動前先準備 outputs 目錄：
+Before the first run, prepare the `outputs/` directory:
 
 ```bash
 mkdir -p outputs
 chmod 777 outputs
 ```
 
-啟動：
+Start the stack:
 
 ```bash
 docker compose up --build -d
 ```
 
-查看 log：
+Follow the logs:
 
 ```bash
 docker compose logs -f bot
