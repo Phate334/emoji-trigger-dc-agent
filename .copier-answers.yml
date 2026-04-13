@@ -1,0 +1,10 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: e9b52e0
+_src_path: https://git.gss.com.tw/cii-internal/python-template.git
+agent_skills:
+- gitlab
+ai_assistant:
+- codex
+description: emoji trigger agent
+project_name: emoji-trigger-agent
+python_version: '3.13'
