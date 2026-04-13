@@ -141,8 +141,6 @@ class AgentExecutor:
             permission_mode="bypassPermissions",
             setting_sources=["project"],
             add_dirs=[self.outputs_root, agent_output_dir],
-            allowed_tools=route.allowed_tools,
-            disallowed_tools=route.disallowed_tools,
             env=dict(self.sdk_env),
             extra_args={"agent": route.agent_id},
             stderr=_stderr_callback,
@@ -158,8 +156,6 @@ class AgentExecutor:
                     "params": _normalize_json_value(request.route.params),
                     "model": request.route.model,
                     "reasoning_effort": request.route.reasoning_effort,
-                    "allowed_tools": request.route.allowed_tools,
-                    "disallowed_tools": request.route.disallowed_tools,
                 },
             },
             "trigger": {

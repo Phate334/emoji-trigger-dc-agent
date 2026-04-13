@@ -2,17 +2,5 @@ version: 1
 routes:
   - emoji: "📝"
     agent_id: "memo-agent"
-    allowed_tools:
-      - "Read"
-      - "Bash(bash .claude/skills/memo-headings/scripts/list_markdown_headings.sh *)"
-      - "Bash(python3 .claude/skills/memo-write/scripts/write_channel_memo.py *)"
-    disallowed_tools:
-      - "Skill"
   - emoji: "🔎"
     agent_id: "issue-whisperer"
-    allowed_tools:
-      - "Read"
-      - "Bash(python3 .claude/skills/issue-summary/scripts/summarize_issue.py *)"
-      - "Bash(bash .claude/skills/gitlab/scripts/gitlab_api.sh *)"
-    disallowed_tools:
-      - "Skill"

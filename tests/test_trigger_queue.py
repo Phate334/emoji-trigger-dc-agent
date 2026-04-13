@@ -23,7 +23,6 @@ def _make_route(base_dir: Path, agent_id: str, emoji: str) -> AgentRoute:
         agent_id=agent_id,
         agent_dir=agent_dir,
         agent_file=agent_file,
-        allowed_tools=["Read"],
     )
 
 

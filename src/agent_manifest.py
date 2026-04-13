@@ -16,8 +16,6 @@ class AgentRoute:
     params: dict[str, Any] = field(default_factory=dict)
     model: str | None = None
     reasoning_effort: str | None = None
-    allowed_tools: list[str] = field(default_factory=list)
-    disallowed_tools: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -78,16 +76,13 @@ def load_agent_manifest(path: Path) -> AgentManifest:
             params=_read_params(item),
             model=_read_optional_str(item, "model"),
             reasoning_effort=_read_reasoning_effort(item),
-            allowed_tools=_read_optional_str_list(item, "allowed_tools"),
-            disallowed_tools=_read_optional_str_list(item, "disallowed_tools"),
         )
         _validate_route(route, index)
         existing_profile = agent_profiles.get(agent_id)
         if existing_profile is not None and not _same_execution_profile(existing_profile, route):
             raise ValueError(
                 "Routes that share the same 'agent_id' must use the same params, model, "
-                "reasoning_effort, allowed_tools, and disallowed_tools so they can be merged "
-                "into one queued execution target"
+                "and reasoning_effort so they can be merged into one queued execution target"
             )
         routes.append(route)
         seen_emojis.add(emoji)
@@ -113,21 +108,6 @@ def _read_reasoning_effort(data: dict[str, object]) -> str | None:
     if not isinstance(effort, str) or not effort:
         raise ValueError("Field 'reasoning_effort' (or legacy 'effort') must be a non-empty string")
     return effort
-
-
-def _read_optional_str_list(data: dict[str, object], key: str) -> list[str]:
-    value = data.get(key)
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise ValueError(f"Field '{key}' must be a list of non-empty strings when provided")
-
-    items: list[str] = []
-    for item in value:
-        if not isinstance(item, str) or not item:
-            raise ValueError(f"Field '{key}' must contain only non-empty strings")
-        items.append(item)
-    return items
 
 
 def _read_params(data: dict[str, object]) -> dict[str, Any]:
@@ -156,6 +136,4 @@ def _same_execution_profile(left: AgentRoute, right: AgentRoute) -> bool:
         and left.params == right.params
         and left.model == right.model
         and left.reasoning_effort == right.reasoning_effort
-        and left.allowed_tools == right.allowed_tools
-        and left.disallowed_tools == right.disallowed_tools
     )

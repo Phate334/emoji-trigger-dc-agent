@@ -203,38 +203,29 @@ outputs/
 
 ## 7) Route Manifest
 
-runtime routing 統一由 `agents/agents.yaml` 控制。基本範例：
+Runtime routing is defined in `agents/agents.yaml`. Example:
 
 ```yaml
 version: 1
 routes:
   - emoji: "📝"
     agent_id: "memo-agent"
-    allowed_tools:
-      - "Read"
-      - "Bash(bash .claude/skills/memo-headings/scripts/list_markdown_headings.sh *)"
-      - "Bash(python3 .claude/skills/memo-write/scripts/write_channel_memo.py *)"
-    disallowed_tools:
-      - "Skill"
 ```
 
-支援的欄位由 `src/agent_manifest.py` 解析，包含：
+The supported fields parsed by `src/agent_manifest.py` are:
 
 - `emoji`
 - `agent_id`
 - `params`
 - `model`
 - `reasoning_effort`
-- `allowed_tools`
-- `disallowed_tools`
 
-原則：
+Guidelines:
 
-- route 要保持 declarative
-- 不要把 emoji routing 寫死在 `src/`
-- 若某個 agent 需要限制 Claude 可用工具，放在 manifest，而不是寫死在 app code
-- 若多個 emoji 指向同一個 `agent_id`，它們的 `params`、`model`、`reasoning_effort`、`allowed_tools`、`disallowed_tools` 必須一致，因為 queue 會把它們合併成同一個 execution target
-- 對有 side effect 的 agent，優先把 `allowed_tools` 收斂到預寫 script 的固定 Bash 前綴，必要時連固定旗標一起限制
+- Keep routes declarative.
+- Do not hardcode emoji routing in `src/`.
+- If multiple emojis point to the same `agent_id`, their `params`, `model`, and `reasoning_effort` must match because the queue merges them into one execution target.
+- Tool access should be defined by the agent project configuration, not by the route manifest.
 
 ## 8) 建立新的 Agent
 
