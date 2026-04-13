@@ -1,0 +1,23 @@
+{
+  "skill_name": "gitlab",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "在目前專案對應的 GitLab 專案裡搜尋和 pipeline timeout 有關的 issue，列出最相關的 5 筆，包含 iid、title、state、assignee、updated_at 與 web_url。",
+      "expected_output": "Use the current repo defaults to search project issues through the GitLab API and summarize up to five matching issues with key metadata.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "讀取目前專案的 merge request !42，說明它的 state、detailed_merge_status、blocking_discussions_resolved、尚未解決的 review thread 數量，以及最新 pipeline 狀態。",
+      "expected_output": "Fetch merge request details and discussions, then summarize merge state, unresolved review threads, and latest pipeline status.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "讀取目前專案 release/1.2 分支上的 .gitlab-ci.yml，接著找出該分支最新一條 failed pipeline，列出 jobs，並摘要失敗 job 的 trace 重點。",
+      "expected_output": "Read a raw repository file for a specific ref, inspect the latest failed pipeline on that ref, list its jobs, and summarize the failing trace.",
+      "files": []
+    }
+  ]
+}
