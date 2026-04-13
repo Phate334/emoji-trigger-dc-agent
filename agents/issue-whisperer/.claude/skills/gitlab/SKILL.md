@@ -18,7 +18,7 @@ Always resolve connection details in this order:
 4. Read `git remote get-url origin` and derive:
 	 - `GITLAB_HOST`
 	 - the default project path, for example `group/project`
-5. If `origin` is unavailable, fall back to `GITLAB_HOST` and `GITLAB_PROJECT_PATH` from the environment.
+5. If `origin` is unavailable, fall back to `GITLAB_HOST` from the environment.
 
 The bundled helper already follows this sequence. Use it instead of rebuilding the discovery logic each time.
 

@@ -58,106 +58,82 @@ uv sync
 
 專案已包含 `claude-agent-sdk` 依賴；Claude Code CLI 由套件內建，不需要另外安裝系統 CLI。
 
-## 3) Environment Variables
+## 3) 環境變數
 
-`src.config.Settings` loads values from the process environment and from `.env` automatically.
-For a complete template, start from [`example.env`](example.env).
+先把 [`example.env`](example.env) 複製成 `.env`。
 
-Minimum required configuration:
+必填：
 
 - `DISCORD_BOT_TOKEN`
-- one of `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`
+- `ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN` 二選一
 
-Available variables:
+常用選填變數：
 
-| Variable | Required | Default | Notes |
+| 變數 | 必填 | 預設值 | 說明 |
 |---|---|---|---|
-| `DISCORD_BOT_TOKEN` | Yes | none | Discord bot token from the Developer Portal. |
-| `EMOJI_AGENT_MANIFEST` | No | `agents/agents.yaml` | Path to the runtime emoji routing manifest. |
-| `ANTHROPIC_API_KEY` | Conditional | none | Standard Claude SDK API key. Use a real key for the official Anthropic API. Placeholder values such as `sk-temp` are only accepted when `ANTHROPIC_BASE_URL` points to a non-official endpoint. |
-| `ANTHROPIC_AUTH_TOKEN` | Conditional | none | Bearer token for proxies or gateways that expect `Authorization: Bearer ...`. |
-| `ANTHROPIC_BASE_URL` | No | official Anthropic endpoint | Optional custom Claude-compatible endpoint. Leave unset when talking directly to Anthropic. |
-| `CLAUDE_MODEL` | No | SDK default | Default model for all routes. A route-level `model` in `agents/agents.yaml` still takes precedence. |
-| `CLAUDE_MAX_TURNS` | No | `4` | Maximum Claude turns per queued execution. Must be at least `1`. |
-| `AGENT_OUTPUTS_ROOT` | No | `/app/outputs` | Root directory for durable agent outputs. |
-| `TRIGGER_QUEUE_DB_PATH` | No | `<AGENT_OUTPUTS_ROOT>/trigger_queue.sqlite3` | Optional explicit SQLite queue path. If unset, the app derives it from `AGENT_OUTPUTS_ROOT`. |
-| `TRIGGER_QUEUE_WORKER_CONCURRENCY` | No | `1` | Number of background queue workers. Must be at least `1`. |
-| `TRIGGER_QUEUE_POLL_INTERVAL_SECONDS` | No | `1.0` | Queue polling interval in seconds. Must be greater than `0`. |
-| `TRIGGER_QUEUE_RETRY_COUNT` | No | `3` | Retry count after the first failed execution. Must be at least `1`. |
-| `TRIGGER_QUEUE_RETRY_DELAY_SECONDS` | No | `30` | Delay between retries in seconds. Must be at least `1`. |
-| `TRIGGER_QUEUE_CLAIM_TIMEOUT_SECONDS` | No | `900` | Lease timeout for recovering stuck `processing` jobs. Must be at least `1`. |
-| `LOG_LEVEL` | No | `INFO` | Application log level. |
-| `DISCORD_LOG_LEVEL` | No | same as `LOG_LEVEL` | Separate log level for the `discord.py` logger. |
+| `EMOJI_AGENT_MANIFEST` | 否 | `agents/agents.yaml` | emoji 路由清單路徑。 |
+| `ANTHROPIC_BASE_URL` | 否 | 官方 Anthropic 端點 | 自訂 Claude 相容端點。 |
+| `CLAUDE_MODEL` | 否 | SDK 預設值 | 所有路由的預設模型；若 `agents/agents.yaml` 有路由層級的 `model`，以路由設定為主。 |
+| `CLAUDE_MAX_TURNS` | 否 | `4` | 每次 queue 執行允許的最大 Claude 回合數，至少要是 `1`。 |
+| `AGENT_OUTPUTS_ROOT` | 否 | `/app/outputs` | agent 輸出根目錄。 |
+| `LOG_LEVEL` | 否 | `INFO` | 應用程式記錄等級。 |
+| `DISCORD_LOG_LEVEL` | 否 | 與 `LOG_LEVEL` 相同 | `discord.py` 記錄器的記錄等級。 |
 
-Common setups:
+僅 `issue-whisperer` 會用到：
 
-Direct Anthropic API:
+| 變數 | 必填 | 預設值 | 說明 |
+|---|---|---|---|
+| `GITLAB_TOKEN` | 否 | 無 | `issue-whisperer` 的 GitLab 唯讀 helper 會讀這個 token。 |
+| `GITLAB_HOST` | 否 | 由 `git remote origin` 推導 | 當 repo remote 不存在，或不是 GitLab remote 時使用的備援 host。 |
 
-```bash
-export DISCORD_BOT_TOKEN="your-discord-token"
-export ANTHROPIC_API_KEY="your-real-anthropic-key"
-```
+## 4) 執行方式
 
-Bearer-auth proxy or gateway:
-
-```bash
-export DISCORD_BOT_TOKEN="your-discord-token"
-export ANTHROPIC_AUTH_TOKEN="your-gateway-bearer-token"
-export ANTHROPIC_BASE_URL="https://your-gateway.example.com"
-```
-
-Local or self-hosted compatible endpoint:
-
-```bash
-export DISCORD_BOT_TOKEN="your-discord-token"
-export ANTHROPIC_API_KEY="sk-temp"
-export ANTHROPIC_BASE_URL="http://localhost:8080"
-```
-
-## 4) Run
-
-### Run locally
+### 本機執行
 
 ```bash
 uv run python -m src.app
 ```
 
-### Run with Docker Compose
+### 使用 Docker Compose 執行
 
-Prepare `.env` first:
+先準備 `.env`：
 
-```ini
-DISCORD_BOT_TOKEN=your-discord-token
-ANTHROPIC_API_KEY=sk-temp
-ANTHROPIC_BASE_URL=http://llm:8080
-CLAUDE_MODEL=gemma-4-e4b
-CLAUDE_MAX_TURNS=4
-AGENT_OUTPUTS_ROOT=/app/outputs
-LOG_LEVEL=INFO
+```bash
+cp example.env .env
 ```
 
-`TRIGGER_QUEUE_DB_PATH` usually does not need to be set explicitly because the app derives it as `/app/outputs/trigger_queue.sqlite3`.
+接著編輯 `.env`，至少填入：
 
-Build the image:
+- `DISCORD_BOT_TOKEN`
+- 你選擇的 Claude 驗證變數
+
+如果要搭配 `compose.yaml` 內建的 `llm` 服務，一併設定：
+
+- `ANTHROPIC_BASE_URL=http://llm:8080`
+- `CLAUDE_MODEL=gemma-4-e4b`
+
+其他設定通常維持預設值即可。
+
+建立映像檔：
 
 ```bash
 docker build -f Dockerfile -t emoji-trigger-agent:latest .
 ```
 
-Before the first run, prepare the `outputs/` directory:
+第一次執行前，先準備 `outputs/` 目錄：
 
 ```bash
 mkdir -p outputs
 chmod 777 outputs
 ```
 
-Start the stack:
+啟動服務：
 
 ```bash
 docker compose up --build -d
 ```
 
-Follow the logs:
+查看記錄：
 
 ```bash
 docker compose logs -f bot
@@ -177,33 +153,33 @@ docker compose logs -f bot
 ```text
 src/
   app.py                # 啟動入口
-  config.py             # env / settings
-  agent_manifest.py     # agents.yaml schema 與驗證
-  bot.py                # Discord 事件 intake 與 queue enqueue
-  trigger_queue.py      # SQLite queue store、claim/retry、背景 worker
+  config.py             # 環境變數與設定
+  agent_manifest.py     # agents.yaml 結構與驗證
+  bot.py                # Discord 事件接收與 queue 寫入
+  trigger_queue.py      # SQLite queue 儲存、claim/retry、背景 worker
   executor.py           # Claude 執行、prompt payload、輸出驗證
 
 agents/
-  agents.yaml           # 唯一 runtime route manifest
+  agents.yaml           # 唯一的路由清單
   <agent-id>/
-    AGENTS.md           # 該 agent 專屬的 Claude Code project 說明
+    AGENTS.md           # 該 agent 專屬的 Claude Code 專案說明
     .claude/
       agents/
         <agent-id>.md   # Claude agent 定義
       skills/
         <skill-id>/
           SKILL.md
-          scripts/      # 預寫 scripts / supporting files
-    .mcp.json           # optional
+          scripts/      # 預寫腳本 / 輔助檔案
+    .mcp.json           # 選用
 
 outputs/
   <agent-id>/
-    ...agent outputs...
+    ...agent 輸出...
 ```
 
-## 7) Route Manifest
+## 7) 路由清單
 
-Runtime routing is defined in `agents/agents.yaml`. Example:
+路由清單由 `agents/agents.yaml` 統一管理。範例：
 
 ```yaml
 version: 1
@@ -212,7 +188,7 @@ routes:
     agent_id: "memo-agent"
 ```
 
-The supported fields parsed by `src/agent_manifest.py` are:
+`src/agent_manifest.py` 目前支援的欄位有：
 
 - `emoji`
 - `agent_id`
@@ -220,12 +196,12 @@ The supported fields parsed by `src/agent_manifest.py` are:
 - `model`
 - `reasoning_effort`
 
-Guidelines:
+原則：
 
-- Keep routes declarative.
-- Do not hardcode emoji routing in `src/`.
-- If multiple emojis point to the same `agent_id`, their `params`, `model`, and `reasoning_effort` must match because the queue merges them into one execution target.
-- Tool access should be defined by the agent project configuration, not by the route manifest.
+- 路由要維持 declarative。
+- 不要把 emoji 路由寫死在 `src/`。
+- 如果多個 emoji 指向同一個 `agent_id`，它們的 `params`、`model`、`reasoning_effort` 必須一致，因為 queue 會把它們合併成同一個 execution target。
+- 工具權限應該定義在 agent 專案設定，而不是路由清單。
 
 ## 8) 建立新的 Agent
 
