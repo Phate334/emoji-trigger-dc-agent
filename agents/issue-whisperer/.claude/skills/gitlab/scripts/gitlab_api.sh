@@ -167,10 +167,28 @@ parse_remote_url() {
   return 0
 }
 
+host_looks_like_non_gitlab() {
+  local host="${1,,}"
+
+  case "$host" in
+    github.com|www.github.com|api.github.com|*.github.com)
+      return 0
+      ;;
+  esac
+
+  [[ "$host" == *github* ]]
+}
+
 discover_context() {
   local repo_hint="${1:-}"
   local require_token="${2:-1}"
   local token_from_env=""
+  local host_from_dotenv=""
+  local project_path_from_dotenv=""
+  local configured_host=""
+  local configured_host_source=""
+  local configured_project_path=""
+  local configured_project_source=""
 
   CTX_REPO_ROOT="$(resolve_repo_root "$repo_hint")"
   CTX_REMOTE_URL=""
@@ -192,14 +210,39 @@ discover_context() {
     parse_remote_url "$CTX_REMOTE_URL" || true
   fi
 
-  if [[ -z "$CTX_HOST" && -n "${GITLAB_HOST:-}" ]]; then
-    CTX_HOST="$GITLAB_HOST"
-    CTX_HOST_SOURCE="environment"
+  if host_from_dotenv="$(read_dotenv_var "$CTX_REPO_ROOT/.env" GITLAB_HOST 2>/dev/null)"; then
+    configured_host="$host_from_dotenv"
+    configured_host_source="$CTX_REPO_ROOT/.env"
+  elif [[ -n "${GITLAB_HOST:-}" ]]; then
+    configured_host="$GITLAB_HOST"
+    configured_host_source="environment"
   fi
 
-  if [[ -z "$CTX_PROJECT_PATH" && -n "${GITLAB_PROJECT_PATH:-}" ]]; then
-    CTX_PROJECT_PATH="$GITLAB_PROJECT_PATH"
-    CTX_PROJECT_SOURCE="environment"
+  if project_path_from_dotenv="$(read_dotenv_var "$CTX_REPO_ROOT/.env" GITLAB_PROJECT_PATH 2>/dev/null)"; then
+    configured_project_path="$project_path_from_dotenv"
+    configured_project_source="$CTX_REPO_ROOT/.env"
+  elif [[ -n "${GITLAB_PROJECT_PATH:-}" ]]; then
+    configured_project_path="$GITLAB_PROJECT_PATH"
+    configured_project_source="environment"
+  fi
+
+  if [[ -n "$configured_host" && -n "$CTX_HOST" ]] && host_looks_like_non_gitlab "$CTX_HOST"; then
+    CTX_HOST="$configured_host"
+    CTX_HOST_SOURCE="$configured_host_source"
+    if [[ "$CTX_PROJECT_SOURCE" == "origin" ]]; then
+      CTX_PROJECT_PATH=""
+      CTX_PROJECT_SOURCE=""
+    fi
+  fi
+
+  if [[ -z "$CTX_HOST" && -n "$configured_host" ]]; then
+    CTX_HOST="$configured_host"
+    CTX_HOST_SOURCE="$configured_host_source"
+  fi
+
+  if [[ -z "$CTX_PROJECT_PATH" && -n "$configured_project_path" ]]; then
+    CTX_PROJECT_PATH="$configured_project_path"
+    CTX_PROJECT_SOURCE="$configured_project_source"
   fi
 
   if token_from_env="$(read_dotenv_var "$CTX_REPO_ROOT/.env" GITLAB_TOKEN 2>/dev/null)"; then

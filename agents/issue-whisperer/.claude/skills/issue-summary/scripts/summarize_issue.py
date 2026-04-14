@@ -6,7 +6,7 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
@@ -16,6 +16,15 @@ from urllib.parse import unquote
 class IssueReference:
     iid: str
     project_path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class IssueNote:
+    id: int | None
+    author_name: str
+    created_at: str
+    system: bool
+    body: str
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,6 +123,52 @@ def summarize_issue(
     return json.loads(body)
 
 
+def list_issue_notes(
+    issue_iid: str,
+    helper: Path,
+    repo_root: Path,
+    project_ref: str,
+    page_size: int = 100,
+) -> list[IssueNote]:
+    notes: list[IssueNote] = []
+    page = 1
+
+    while True:
+        endpoint = f"/projects/{project_ref}/issues/{issue_iid}/notes"
+        body = run_helper(
+            helper,
+            repo_root,
+            "request",
+            "GET",
+            endpoint,
+            f"page={page}",
+            f"per_page={page_size}",
+            "sort=asc",
+        )
+        payload = json.loads(body)
+        if not isinstance(payload, list) or not payload:
+            break
+
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            notes.append(
+                IssueNote(
+                    id=item.get("id") if isinstance(item.get("id"), int) else None,
+                    author_name=str(item.get("author", {}).get("name", "")),
+                    created_at=str(item.get("created_at", "")),
+                    system=bool(item.get("system", False)),
+                    body=str(item.get("body", "")),
+                )
+            )
+
+        if len(payload) < page_size:
+            break
+        page += 1
+
+    return notes
+
+
 def render_markdown(
     message: dict[str, Any],
     trigger: dict[str, Any],
@@ -129,7 +184,7 @@ def render_markdown(
         "- Trigger source: " + str(trigger.get("source", "")),
         "- Triggered at: " + str(trigger.get("observed_at", "")),
         "- Issue count: " + str(issue_count),
-        "- Updated: " + datetime.utcnow().isoformat() + "Z",
+        "- Updated: " + datetime.now(UTC).isoformat(),
         "",
     ]
 
@@ -147,8 +202,15 @@ def render_markdown(
         )
         return "\n".join(lines)
 
+    lines.extend(
+        [
+            "## Latest Issues",
+            "",
+        ]
+    )
+
     for item in summaries:
-        lines.append(f"## Issue #{item.get('iid')}")
+        lines.append(f"### Issue #{item.get('iid')}")
         if item.get("_project_ref"):
             lines.append(f"- Project: {item.get('_project_ref')}")
         lines.append(f"- Title: {item.get('title')}")
@@ -165,8 +227,45 @@ def render_markdown(
         lines.append(f"- Updated at: {item.get('updated_at')}")
         lines.append(f"- User notes: {item.get('user_notes_count')}")
         lines.append("")
-        description = item.get("description") or "(No description)"
-        lines.append(description)
+
+    first_issue = summaries[0]
+    first_issue_description = first_issue.get("description") or "(No description)"
+    first_issue_notes = first_issue.get("_notes") or []
+
+    lines.extend(
+        [
+            f"## First Issue Detail: #{first_issue.get('iid')}",
+            "",
+            f"- Project: {first_issue.get('_project_ref', '')}",
+            f"- Title: {first_issue.get('title')}",
+            f"- State: {first_issue.get('state')}",
+            f"- Web: {first_issue.get('web_url')}",
+            f"- Updated at: {first_issue.get('updated_at')}",
+            f"- Comment count fetched: {len(first_issue_notes)}",
+            "",
+            "### Description",
+            "",
+            str(first_issue_description),
+            "",
+            "### Comments",
+            "",
+        ]
+    )
+
+    if not first_issue_notes:
+        lines.append("(No comments found)")
+        lines.append("")
+        return "\n".join(lines)
+
+    for index, note in enumerate(first_issue_notes, start=1):
+        lines.append(f"#### Comment {index}")
+        lines.append(f"- Author: {note.author_name or '(unknown)'}")
+        lines.append(f"- Created at: {note.created_at}")
+        lines.append(f"- System note: {'yes' if note.system else 'no'}")
+        if note.id is not None:
+            lines.append(f"- Note id: {note.id}")
+        lines.append("")
+        lines.append(note.body or "(Empty comment)")
         lines.append("")
 
     return "\n".join(lines)
@@ -192,6 +291,7 @@ def main() -> int:
     project_ref_cache: dict[str, str] = {}
     default_project_ref = args.project_ref.strip()
     default_project_error = ""
+    first_issue_target: tuple[str, str] | None = None
     if references and not default_project_ref:
         try:
             default_project_ref = run_helper(helper, repo_root, "project-ref")
@@ -217,6 +317,16 @@ def main() -> int:
                 issue = summarize_issue(reference.iid, helper, repo_root, project_ref)
                 if issue is not None:
                     issue["_project_ref"] = project_ref
+                    if first_issue_target is None:
+                        first_issue_target = target_key
+                        issue["_notes"] = list_issue_notes(
+                            reference.iid,
+                            helper,
+                            repo_root,
+                            project_ref,
+                        )
+                    else:
+                        issue["_notes"] = []
                     summaries.append(issue)
             except ValueError as exc:
                 summaries.append(
@@ -232,6 +342,7 @@ def main() -> int:
                         "updated_at": "",
                         "user_notes_count": "",
                         "description": default_project_error or str(exc),
+                        "_notes": [],
                     }
                 )
             except subprocess.CalledProcessError as exc:
@@ -248,6 +359,7 @@ def main() -> int:
                         "updated_at": "",
                         "user_notes_count": "",
                         "description": exc.stderr or str(exc),
+                        "_notes": [],
                     }
                 )
 

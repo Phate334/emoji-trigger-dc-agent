@@ -1,7 +1,7 @@
 ---
 name: gitlab
-description: Use this skill when the user needs read-only data from GitLab through the REST API, especially for self-hosted or Community Edition projects. Trigger it for GitLab issue search, issue comments or discussions, merge request or PR status, unresolved review threads, branch file contents, pipelines, jobs, CI logs, and similar repository inspection tasks. It uses curl or wget, discovers GITLAB_TOKEN from the repo .env first, and derives the GitLab host plus default project path from git remote origin.
-compatibility: Requires bash, git, and curl or wget. Works best inside a git checkout whose origin points at the target GitLab project.
+description: Use this skill when the user needs read-only data from GitLab through the REST API, especially for self-hosted or Community Edition projects. Trigger it for GitLab issue search, issue comments or discussions, merge request or PR status, unresolved review threads, branch file contents, pipelines, jobs, CI logs, and similar repository inspection tasks. It uses curl or wget, discovers GITLAB_TOKEN from the repo .env first, and expects callers to pass an explicit project id or project ref for project-scoped reads.
+compatibility: Requires bash, git, and curl or wget. Works best when the caller already knows the target GitLab host and project identifier.
 ---
 
 # GitLab Read-Only API Skill
@@ -15,16 +15,15 @@ Always resolve connection details in this order:
 1. Find the repo root with `git rev-parse --show-toplevel`.
 2. Read `GITLAB_TOKEN` from `<repo>/.env` first.
 3. If `GITLAB_TOKEN` is not in `.env`, fall back to the exported environment variable.
-4. Read `git remote get-url origin` and derive:
-	 - `GITLAB_HOST`
-	 - the default project path, for example `group/project`
-5. If `origin` is unavailable, fall back to `GITLAB_HOST` from the environment.
+4. Prefer an explicit project id or project ref supplied by the caller.
+5. Resolve `GITLAB_HOST` from `<repo>/.env`, exported environment variables, or repository context when available.
 
 The bundled helper already follows this sequence. Use it instead of rebuilding the discovery logic each time.
 
 ## Always Do This
 
 - Start from the repo root before calling the helper.
+- For project-scoped reads, pass an explicit project id or project ref instead of relying on repository remotes.
 - Treat GitLab PR as GitLab merge request. Use merge request endpoints for PR requests.
 - Stay read-only. Use `GET` or `HEAD` only.
 - Prefer the helper at `.claude/skills/gitlab/scripts/gitlab_api.sh` over hand-written `curl` unless you need a one-off edge case.
@@ -42,10 +41,10 @@ repo_root="$(git rev-parse --show-toplevel)"
 helper="$repo_root/.claude/skills/gitlab/scripts/gitlab_api.sh"
 
 "$helper" --repo "$repo_root" discover
-project_ref="$($helper --repo "$repo_root" project-ref)"
+project_ref="$($helper --repo "$repo_root" project-ref "group/project")"
 ```
 
-Search issues in the current project:
+Search issues in a specific project:
 
 ```bash
 "$helper" --repo "$repo_root" request GET \
@@ -101,7 +100,7 @@ job_id="<failed job id>"
 
 ## Supported Read Workflows
 
-- Search current-project issues or fetch a specific issue.
+- Search issues in an explicitly selected project or fetch a specific issue.
 - Read issue notes or issue discussions.
 - Search merge requests or fetch a specific merge request.
 - Inspect merge request discussions, notes, reviewers, commits, and pipelines.
@@ -130,4 +129,4 @@ Read `.claude/skills/gitlab/references/read-apis.md` when you need:
 - If the user asks a question, answer it directly after fetching the minimum useful set of endpoints.
 - Include identifiers the user can reuse, such as issue IID, MR IID, pipeline ID, job ID, branch, ref, and `web_url` when relevant.
 - If a log or file is large, inspect only the relevant portion and summarize the key lines.
-- If discovery fails because the token or origin remote is missing, say exactly which input is missing and what was checked.
+- If discovery fails because the token, host, or explicit project identifier is missing, say exactly which input is missing and what was checked.

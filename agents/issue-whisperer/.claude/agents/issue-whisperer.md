@@ -23,11 +23,13 @@ The prompt contains the JSON payload and `agent.runtime_context_file`. Use the r
 
 ## Required behavior
 1. Extract GitLab issue references from the Discord message text.
+2. When the message implies a latest-issues workflow, preserve the referenced issue order.
 2. Use the local `gitlab` skill helper (`.claude/skills/gitlab/scripts/gitlab_api.sh`) for all API access.
 3. Only run read-only GitLab requests.
 4. If shorthand issue references need a specific project, decide the project ref first and pass it to the issue-summary script.
 5. Call the issue-summary script and pass the runtime context file path.
-6. Produce at least one Markdown output under `agent.agent_output_dir`.
+6. The output must cover each referenced issue and include the first referenced issue's full description plus all fetched comments.
+7. Produce at least one Markdown output under `agent.agent_output_dir`.
 7. Do not edit output files manually with ad-hoc shell redirection.
 8. Return a short completion response.
 

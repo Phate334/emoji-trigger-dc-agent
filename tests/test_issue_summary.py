@@ -60,3 +60,68 @@ class IssueSummaryScriptTests(unittest.TestCase):
 
         self.assertEqual(project_ref, "group%2Fproject")
         run_helper.assert_not_called()
+
+    def test_render_markdown_includes_first_issue_comments(self) -> None:
+        markdown = issue_summary.render_markdown(
+            message={
+                "jump_url": "https://discord.test/messages/1001",
+                "id": 1001,
+            },
+            trigger={
+                "emoji": "🔎",
+                "source": "manual_test",
+                "observed_at": "2026-04-15T00:00:00+00:00",
+            },
+            summaries=[
+                {
+                    "iid": "77",
+                    "_project_ref": "group%2Fotter-stream",
+                    "title": "Latest issue",
+                    "state": "opened",
+                    "labels": ["bug"],
+                    "assignees": [{"name": "Alice"}],
+                    "author": {"name": "Bob"},
+                    "web_url": "https://gitlab.example.com/group/otter-stream/-/issues/77",
+                    "updated_at": "2026-04-15T00:00:00Z",
+                    "user_notes_count": 2,
+                    "description": "Issue body",
+                    "_notes": [
+                        issue_summary.IssueNote(
+                            id=1,
+                            author_name="Carol",
+                            created_at="2026-04-15T00:01:00Z",
+                            system=False,
+                            body="First comment",
+                        ),
+                        issue_summary.IssueNote(
+                            id=2,
+                            author_name="GitLab",
+                            created_at="2026-04-15T00:02:00Z",
+                            system=True,
+                            body="System note",
+                        ),
+                    ],
+                },
+                {
+                    "iid": "76",
+                    "_project_ref": "group%2Fotter-stream",
+                    "title": "Second issue",
+                    "state": "closed",
+                    "labels": [],
+                    "assignees": [],
+                    "author": {"name": "Dana"},
+                    "web_url": "https://gitlab.example.com/group/otter-stream/-/issues/76",
+                    "updated_at": "2026-04-14T00:00:00Z",
+                    "user_notes_count": 0,
+                    "description": "Another issue body",
+                    "_notes": [],
+                },
+            ],
+            issue_count=2,
+        )
+
+        self.assertIn("## Latest Issues", markdown)
+        self.assertIn("## First Issue Detail: #77", markdown)
+        self.assertIn("### Comments", markdown)
+        self.assertIn("First comment", markdown)
+        self.assertIn("System note", markdown)
