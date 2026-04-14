@@ -138,7 +138,11 @@ def render_markdown(
             [
                 "No issue reference found in message content.",
                 "",
-                "Tip: include either `https://gitlab.example.com/.../-/issues/<iid>` or `#<iid>` in the message.",
+                (
+                    "Tip: include either "
+                    "`https://gitlab.example.com/.../-/issues/<iid>` "
+                    "or `#<iid>` in the message."
+                ),
             ]
         )
         return "\n".join(lines)
@@ -150,8 +154,12 @@ def render_markdown(
         lines.append(f"- Title: {item.get('title')}")
         lines.append(f"- State: {item.get('state')}")
         labels = item.get("labels") or []
-        lines.append("- Labels: " + (", ".join(labels) if isinstance(labels, list) else str(labels)))
-        lines.append(f"- Assignees: " + ", ".join(a.get("name", "") for a in item.get("assignees", [])))
+        lines.append(
+            "- Labels: " + (", ".join(labels) if isinstance(labels, list) else str(labels))
+        )
+        lines.append(
+            "- Assignees: " + ", ".join(a.get("name", "") for a in item.get("assignees", []))
+        )
         lines.append(f"- Author: {item.get('author', {}).get('name', '')}")
         lines.append(f"- Web: {item.get('web_url')}")
         lines.append(f"- Updated at: {item.get('updated_at')}")
