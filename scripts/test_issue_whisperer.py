@@ -149,24 +149,26 @@ def load_project(project_id: int) -> dict[str, Any]:
 
 def load_latest_issue_urls(project_id: int, limit: int) -> tuple[dict[str, Any], list[str]]:
     project = load_project(project_id)
-    project_id = project.get("id")
-    if project_id is None:
+    project_identifier = project.get("id")
+    if not isinstance(project_identifier, int):
         raise RuntimeError("GitLab project response did not include an id.")
 
     issues = gitlab_request_json(
-        f"/projects/{project_id}/issues",
+        f"/projects/{project_identifier}/issues",
         "state=all",
         "order_by=created_at",
         "sort=desc",
         f"per_page={limit}",
     )
     if not isinstance(issues, list):
-        raise RuntimeError(f"Unexpected GitLab issues response for project id {project_id!r}.")
+        raise RuntimeError(
+            f"Unexpected GitLab issues response for project id {project_identifier!r}."
+        )
 
     issue_urls = [str(item.get("web_url", "")).strip() for item in issues]
     issue_urls = [url for url in issue_urls if url]
     if not issue_urls:
-        raise RuntimeError(f"No issues were returned for project id {project_id!r}.")
+        raise RuntimeError(f"No issues were returned for project id {project_identifier!r}.")
 
     return project, issue_urls
 
