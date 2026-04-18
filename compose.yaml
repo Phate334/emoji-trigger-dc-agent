@@ -1,6 +1,8 @@
 services:
   bot:
-    build: .
+    build:
+      context: .
+      network: host
     image: emoji-trigger-agent:latest
     env_file:
       - .env
@@ -10,8 +12,44 @@ services:
     volumes:
       - ./outputs:/app/outputs
 
+  loki:
+    image: grafana/loki:3.6.4
+    command: -config.file=/etc/loki/config.yml
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./ops/loki/config.yml:/etc/loki/config.yml:ro
+      - loki-data:/loki
+    init: true
+
+  grafana:
+    image: grafana/grafana:12.4.0
+    depends_on:
+      - loki
+    ports:
+      - "127.0.0.1:3000:3000"
+    init: true
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+
+  alloy:
+    image: grafana/alloy:v1.15.0
+    command: run /etc/alloy/config.alloy --storage.path=/var/lib/alloy/data
+    depends_on:
+      - loki
+    init: true
+    volumes:
+      - ./ops/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+
   llm:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b8660
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b8808
     volumes:
       - cache:/root/.cache/
     ports:
@@ -26,11 +64,14 @@ services:
       - LLAMA_ARG_CACHE_TYPE_V=q8_0
       - LLAMA_ARG_FIT=off
       - LLAMA_ARG_HF_REPO=ggml-org/gemma-4-E4B-it-GGUF
-      - LLAMA_ARG_HF_FILE=gemma-4-e4b-it-Q4_K_M.gguf
+      - LLAMA_ARG_HF_FILE=gemma-4-E4B-it-Q4_K_M.gguf
       - LLAMA_ARG_ALIAS=gemma-4-e4b
       - LLAMA_ARG_MMPROJ_AUTO=0
     devices:
       - "nvidia.com/gpu=all"
 
 volumes:
+  alloy-data:
   cache:
+  grafana-data:
+  loki-data:

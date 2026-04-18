@@ -77,7 +77,10 @@ uv sync
 | `CLAUDE_MAX_TURNS` | 否 | `4` | 每次 queue 執行允許的最大 Claude 回合數，至少要是 `1`。 |
 | `AGENT_OUTPUTS_ROOT` | 否 | `/app/outputs` | agent 輸出根目錄。 |
 | `LOG_LEVEL` | 否 | `INFO` | 應用程式記錄等級。 |
+| `LOG_FORMAT` | 否 | `json` | Application log format. Supported values: `json` and `text`. Keep `json` in containers so Loki can parse logs reliably. |
 | `DISCORD_LOG_LEVEL` | 否 | 與 `LOG_LEVEL` 相同 | `discord.py` 記錄器的記錄等級。 |
+| `GRAFANA_ADMIN_USER` | 否 | `admin` | Grafana admin username for the bundled Docker Compose stack. |
+| `GRAFANA_ADMIN_PASSWORD` | 否 | `admin` | Grafana admin password for the bundled Docker Compose stack. |
 
 僅 `issue-whisperer` 會用到：
 
@@ -133,11 +136,22 @@ chmod 777 outputs
 docker compose up --build -d
 ```
 
-查看記錄：
+View bot container logs:
 
 ```bash
 docker compose logs -f bot
 ```
+
+Open Grafana:
+
+- URL: `http://localhost:3000`
+- Credentials: `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`
+
+Compose also starts:
+
+- `loki`: stores container logs
+- `alloy`: tails `bot` container logs from the Docker daemon and forwards them to Loki
+- `grafana`: queries and visualizes Loki logs
 
 ## 5) Discord 必要設定
 
@@ -245,7 +259,34 @@ routes:
 - 如果 Claude 只回了一句成功，但沒有實際檔案變更，現在會被視為失敗
 - bot 重啟後，未完成或 lease 過期的 processing target 會回到 pending 繼續執行
 
-## 11) Troubleshooting
+## 11) Logs with Loki
+
+The bundled Compose log pipeline is:
+
+```text
+bot stdout/stderr -> Docker container logs -> Grafana Alloy -> Loki -> Grafana
+```
+
+Design principles:
+
+- Application logs default to one-line JSON so Loki and Grafana can query them cleanly
+- The bot does not call the Loki API directly, which keeps application code decoupled from the log backend
+- Alloy only collects logs from the `bot` service instead of forwarding every container in the Compose project
+- The default `discord.py` logging handler is disabled to avoid duplicate output alongside the application's root logger
+
+Common Grafana Explore query:
+
+```logql
+{app="emoji-trigger-agent", service="bot"}
+```
+
+To filter by JSON fields:
+
+```logql
+{app="emoji-trigger-agent", service="bot"} | json | event="queue.target.failed"
+```
+
+## 12) Troubleshooting
 
 若 Bot 已上線但沒有產生輸出，先檢查：
 
