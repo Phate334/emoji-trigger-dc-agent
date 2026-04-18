@@ -6,18 +6,28 @@ from .agent_manifest import load_agent_manifest
 from .bot import build_client
 from .config import Settings
 from .executor import AgentExecutor
-from .logging_config import setup_logging
+from .logging_config import log_extra, setup_logging
 from .trigger_queue import TriggerQueueStore, TriggerQueueWorker
 
-logger = logging.getLogger("emoji-trigger-agent")
+logger = logging.getLogger(__name__)
 
 
 def run() -> None:
     settings = Settings()  # type: ignore[call-arg]
     setup_logging(settings)
 
-    logger.info("Starting emoji trigger agent")
-    logger.debug("Using manifest: %s", settings.emoji_agent_manifest)
+    logger.info(
+        "Starting emoji trigger agent",
+        extra=log_extra(
+            "app.start",
+            manifest_path=settings.emoji_agent_manifest,
+            outputs_root=settings.agent_outputs_root,
+            trigger_queue_db_path=settings.resolved_trigger_queue_db_path,
+            claude_model=settings.claude_model,
+            claude_max_turns=settings.claude_max_turns,
+            log_format=settings.log_format,
+        ),
+    )
 
     outputs_root = settings.agent_outputs_root
     _ensure_writable_directory(outputs_root)
@@ -48,7 +58,7 @@ def run() -> None:
         queue_store=queue_store,
         trigger_worker=trigger_worker,
     )
-    client.run(settings.discord_bot_token)
+    client.run(settings.discord_bot_token, log_handler=None)
 
 
 def main() -> None:

@@ -20,8 +20,9 @@ from .executor import (
     ExecutionTrigger,
     TriggerContext,
 )
+from .logging_config import log_extra
 
-logger = logging.getLogger("emoji-trigger-agent")
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS queue_messages (
@@ -652,7 +653,10 @@ class TriggerQueueWorker:
 
         recovered = await self.store.recover_expired_claims()
         if recovered:
-            logger.warning("Recovered %s expired queue claim(s)", recovered)
+            logger.warning(
+                "Recovered expired queue claims",
+                extra=log_extra("queue.claims.recovered", recovered_count=recovered),
+            )
 
         self._stop_event.clear()
         self._tasks = [
@@ -670,7 +674,10 @@ class TriggerQueueWorker:
         results = await asyncio.gather(*self._tasks, return_exceptions=True)
         for result in results:
             if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
-                logger.error("Queue worker stopped with error: %s", result)
+                logger.error(
+                    "Queue worker stopped with error",
+                    extra=log_extra("queue.worker.stop_error", error=str(result)),
+                )
         self._tasks = []
 
     async def _run_loop(self, worker_id: int) -> None:
@@ -684,16 +691,17 @@ class TriggerQueueWorker:
 
     async def _execute_item(self, worker_id: int, item: QueuedExecutionItem) -> None:
         logger.info(
-            (
-                "Processing queued trigger: worker=%s target_id=%s message_id=%s "
-                "agent_id=%s emojis=%s attempt=%s"
+            "Processing queued trigger",
+            extra=log_extra(
+                "queue.target.processing",
+                worker_id=worker_id,
+                target_id=item.target_id,
+                message_id=item.message_id,
+                agent_id=item.agent_id,
+                merged_emojis=item.merged_emojis,
+                attempt_count=item.attempt_count,
+                trigger_event_count=len(item.trigger_events),
             ),
-            worker_id,
-            item.target_id,
-            item.message_id,
-            item.agent_id,
-            ", ".join(item.merged_emojis),
-            item.attempt_count,
         )
 
         try:
@@ -701,10 +709,16 @@ class TriggerQueueWorker:
             result = await self.executor.execute(request)
         except Exception as exc:
             logger.exception(
-                "Queued trigger failed: target_id=%s message_id=%s agent_id=%s",
-                item.target_id,
-                item.message_id,
-                item.agent_id,
+                "Queued trigger failed",
+                extra=log_extra(
+                    "queue.target.failed",
+                    target_id=item.target_id,
+                    message_id=item.message_id,
+                    agent_id=item.agent_id,
+                    attempt_count=item.attempt_count,
+                    merged_emojis=item.merged_emojis,
+                    error=str(exc),
+                ),
             )
             await self.store.mark_failure(
                 item,
@@ -717,11 +731,15 @@ class TriggerQueueWorker:
         await self.store.mark_success(item)
         _log_execution_result(item, result)
         logger.info(
-            "Queued trigger finished: target_id=%s message_id=%s agent_id=%s emojis=%s",
-            item.target_id,
-            item.message_id,
-            item.agent_id,
-            ", ".join(item.merged_emojis),
+            "Queued trigger finished",
+            extra=log_extra(
+                "queue.target.finished",
+                target_id=item.target_id,
+                message_id=item.message_id,
+                agent_id=item.agent_id,
+                merged_emojis=item.merged_emojis,
+                changed_output_file_count=len(result.changed_output_files),
+            ),
         )
 
     def _build_execution_request(self, item: QueuedExecutionItem) -> ExecutionRequest:
@@ -836,12 +854,15 @@ def _runtime_route(route: AgentRoute, emoji: str) -> AgentRoute:
 
 
 def _log_execution_result(item: QueuedExecutionItem, result: ExecutionResult) -> None:
-    if result.agent_output.strip():
-        logger.debug("Agent output suppressed from channel: %s", result.agent_output)
     logger.debug(
-        "Verified agent output files for target %s: %s",
-        item.target_id,
-        ", ".join(str(path) for path in result.changed_output_files),
+        "Verified agent output files",
+        extra=log_extra(
+            "queue.target.output_verified",
+            target_id=item.target_id,
+            agent_id=item.agent_id,
+            agent_output_chars=len(result.agent_output.strip()),
+            changed_output_files=[str(path) for path in result.changed_output_files],
+        ),
     )
 
 

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
         discord_bot_token: Discord bot token (required)
         emoji_agent_manifest: Path to agent manifest file
         log_level: Application log level
+        log_format: Application log format
         discord_log_level: Discord.py library log level
         anthropic_api_key: Anthropic API key (optional)
         anthropic_auth_token: Custom Authorization bearer token (optional)
@@ -31,6 +32,7 @@ class Settings(BaseSettings):
 
     # Logging Configuration
     log_level: str = "INFO"
+    log_format: str = "json"
     discord_log_level: str | None = None
 
     # Claude Code SDK Configuration
@@ -55,6 +57,7 @@ class Settings(BaseSettings):
         "discord_bot_token",
         "emoji_agent_manifest",
         "log_level",
+        "log_format",
         "discord_log_level",
         "anthropic_api_key",
         "anthropic_auth_token",
@@ -90,6 +93,14 @@ class Settings(BaseSettings):
         if value <= 0:
             raise ValueError("TRIGGER_QUEUE_POLL_INTERVAL_SECONDS must be greater than 0")
         return value
+
+    @field_validator("log_format")
+    @classmethod
+    def validate_log_format(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized not in {"json", "text"}:
+            raise ValueError("LOG_FORMAT must be one of: json, text")
+        return normalized
 
     @model_validator(mode="after")
     def validate_anthropic_configuration(self) -> Self:

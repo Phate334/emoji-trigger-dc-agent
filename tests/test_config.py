@@ -51,3 +51,21 @@ class SettingsTests(unittest.TestCase):
                 "ANTHROPIC_BASE_URL": "https://gateway.example.com",
             },
         )
+
+    def test_log_format_is_normalized_and_validated(self) -> None:
+        settings = Settings(
+            _env_file=None,
+            discord_bot_token="discord-token",
+            anthropic_api_key="real-key",
+            log_format="TEXT",
+        )
+
+        self.assertEqual(settings.log_format, "text")
+
+        with self.assertRaisesRegex(ValueError, "LOG_FORMAT must be one of: json, text"):
+            Settings(
+                _env_file=None,
+                discord_bot_token="discord-token",
+                anthropic_api_key="real-key",
+                log_format="xml",
+            )
