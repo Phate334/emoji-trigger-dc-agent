@@ -119,3 +119,25 @@ class AgentExecutorTests(unittest.IsolatedAsyncioTestCase):
                 "finished without producing any file changes",
             ):
                 await self.executor.execute(self.request)
+
+    async def test_build_claude_options_enables_process_hooks(self) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_options(**kwargs: object) -> SimpleNamespace:
+            captured.update(kwargs)
+            return SimpleNamespace(**kwargs)
+
+        with patch("src.executor._ClaudeAgentOptionsCls", _fake_options):
+            self.executor._build_claude_options(
+                self.request,
+                self.base_dir / "outputs" / "memo-agent",
+            )
+
+        hooks = captured.get("hooks")
+        self.assertIsInstance(hooks, dict)
+        assert isinstance(hooks, dict)
+        self.assertIn("PreToolUse", hooks)
+        self.assertIn("PostToolUse", hooks)
+        self.assertIn("SubagentStart", hooks)
+        self.assertTrue(hooks["PreToolUse"])
+        self.assertTrue(callable(captured.get("stderr")))
